@@ -75,7 +75,7 @@ public sealed class XInputEnumerator : IXInputEnumerator
     /// Normalize Vortice BatteryType enum ToString() to canonical casing.
     /// Vortice outputs "Nimh" but we use "NiMH" throughout the codebase.
     /// </summary>
-    private static string NormalizeBatteryType(Vortice.XInput.BatteryType type) => type switch
+    internal static string NormalizeBatteryType(Vortice.XInput.BatteryType type) => type switch
     {
         Vortice.XInput.BatteryType.Wired => "Wired",
         Vortice.XInput.BatteryType.Alkaline => "Alkaline",

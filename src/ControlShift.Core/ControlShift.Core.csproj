@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ControlShift.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Vortice.XInput" Version="3.6.2" />
     <PackageReference Include="HidSharp" Version="2.6.4" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
