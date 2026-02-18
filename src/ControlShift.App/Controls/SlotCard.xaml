@@ -27,7 +27,7 @@
             <!-- Device info -->
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                 <TextBlock x:Name="DeviceName" Text="No Controller"
-                           FontSize="13" FontWeight="Medium"
+                           FontSize="13" FontWeight="SemiBold"
                            Foreground="{StaticResource CsTextPrimaryBrush}"
                            TextTrimming="CharacterEllipsis" />
 
@@ -53,7 +53,7 @@
             <StackPanel Grid.Column="2" Orientation="Horizontal"
                         VerticalAlignment="Center" Spacing="4">
                 <TextBlock x:Name="BatteryIcon" Text=""
-                           FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                           FontFamily="Segoe MDL2 Assets"
                            FontSize="14"
                            Foreground="{StaticResource CsTextSecondaryBrush}" />
                 <TextBlock x:Name="BatteryText" Text=""

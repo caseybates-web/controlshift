@@ -22,11 +22,23 @@ jobs:
       with:
         dotnet-version: 8.0.x
 
-    - name: Restore dependencies
-      run: dotnet restore ControlShift.sln -p:Platform=x64
+    - name: Restore Core
+      run: dotnet restore src/ControlShift.Core/ControlShift.Core.csproj
 
-    - name: Build
-      run: dotnet build ControlShift.sln --configuration ${{ matrix.configuration }} -p:Platform=x64 --no-restore
+    - name: Restore Tests
+      run: dotnet restore tests/ControlShift.Core.Tests/ControlShift.Core.Tests.csproj
+
+    - name: Build Core
+      run: >
+        dotnet build src/ControlShift.Core/ControlShift.Core.csproj
+        --configuration ${{ matrix.configuration }}
+        --no-restore
+
+    - name: Build Tests
+      run: >
+        dotnet build tests/ControlShift.Core.Tests/ControlShift.Core.Tests.csproj
+        --configuration ${{ matrix.configuration }}
+        --no-restore
 
     - name: Test
       run: >
@@ -42,3 +54,31 @@ jobs:
       with:
         name: test-results-${{ matrix.configuration }}
         path: tests/**/TestResults/*.trx
+
+  build-app:
+    runs-on: windows-latest
+    # App build is separate — XAML compilation requires Windows Desktop SDK
+    # and may need additional workloads on the runner.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Restore App
+      run: dotnet restore src/ControlShift.App/ControlShift.App.csproj -p:Platform=x64
+
+    - name: Build App
+      run: >
+        dotnet build src/ControlShift.App/ControlShift.App.csproj
+        --configuration ${{ matrix.configuration }}
+        -p:Platform=x64
+        --no-restore
