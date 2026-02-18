@@ -73,9 +73,6 @@ jobs:
       with:
         dotnet-version: 8.0.x
 
-    - name: Install Windows App SDK workload
-      run: dotnet workload install windowsdesktop
-
     - name: Restore App
       run: dotnet restore src/ControlShift.App/ControlShift.App.csproj -p:Platform=x64
 
