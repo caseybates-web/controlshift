@@ -1,0 +1,69 @@
+<Window
+    x:Class="ControlShift.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="ControlShift"
+    Width="320" Height="480">
+
+    <Grid Background="{StaticResource CsBackgroundBrush}" Padding="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header bar -->
+        <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="ControlShift"
+                           FontSize="18" FontWeight="SemiBold"
+                           Foreground="{StaticResource CsTextPrimaryBrush}" />
+                <TextBlock Text="v0.1"
+                           FontSize="11" Margin="8,6,0,0"
+                           Foreground="{StaticResource CsTextSecondaryBrush}" />
+            </StackPanel>
+
+            <Button Grid.Column="1" Content="&#xE713;"
+                    FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                    Background="Transparent" BorderThickness="0"
+                    Foreground="{StaticResource CsTextSecondaryBrush}"
+                    ToolTipService.ToolTip="Settings"
+                    Padding="8" />
+        </Grid>
+
+        <!-- Controller slot cards (P1–P4) -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="SlotPanel" Spacing="8">
+                <!-- Slot cards are populated programmatically in code-behind -->
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Bottom status bar -->
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Ellipse x:Name="StatusDot" Width="8" Height="8"
+                         Fill="{StaticResource CsAccentBrush}" Margin="0,0,8,0" />
+                <TextBlock x:Name="StatusText" Text="Ready"
+                           FontSize="11"
+                           Foreground="{StaticResource CsTextSecondaryBrush}" />
+            </StackPanel>
+
+            <Button Grid.Column="1" x:Name="RefreshButton"
+                    Content="Refresh" Click="RefreshButton_Click"
+                    Background="{StaticResource CsCardBackgroundBrush}"
+                    Foreground="{StaticResource CsAccentBrush}"
+                    BorderBrush="{StaticResource CsBorderBrush}"
+                    Padding="12,6" FontSize="12" />
+        </Grid>
+    </Grid>
+</Window>
