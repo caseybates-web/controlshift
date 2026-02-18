@@ -15,7 +15,7 @@ public sealed class XInputEnumerator : IXInputEnumerator
     {
         var slots = new List<XInputSlot>(4);
 
-        for (int i = 0; i < 4; i++)
+        for (uint i = 0; i < 4; i++)
         {
             try
             {
@@ -37,7 +37,7 @@ public sealed class XInputEnumerator : IXInputEnumerator
 
                     slots.Add(new XInputSlot
                     {
-                        SlotIndex = i,
+                        SlotIndex = (int)i,
                         IsConnected = true,
                         DeviceType = caps.Type.ToString(),
                         DeviceSubType = caps.SubType.ToString(),
@@ -49,7 +49,7 @@ public sealed class XInputEnumerator : IXInputEnumerator
                 {
                     slots.Add(new XInputSlot
                     {
-                        SlotIndex = i,
+                        SlotIndex = (int)i,
                         IsConnected = false
                     });
                 }
@@ -59,7 +59,7 @@ public sealed class XInputEnumerator : IXInputEnumerator
                 Logger.Warning(ex, "Failed to query XInput slot {Slot}", i);
                 slots.Add(new XInputSlot
                 {
-                    SlotIndex = i,
+                    SlotIndex = (int)i,
                     IsConnected = false
                 });
             }
