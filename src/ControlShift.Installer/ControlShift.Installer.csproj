@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    DECISION: Placeholder project for Phase 1 scaffold.
+    Will be replaced with a WiX 4 bundle project (wixproj) targeting the MSIX output
+    of ControlShift.App during Phase 3 packaging work.
+    See CLAUDE.md Phase 3 and docs/packaging.md (to be written).
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ControlShift.Installer</RootNamespace>
+  </PropertyGroup>
+
+</Project>

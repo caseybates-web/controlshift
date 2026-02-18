@@ -6,7 +6,7 @@ A lightweight Windows system tray app that lets users reorder XInput controller 
 
 
 
-\*\*Status:\*\* Pre-scaffold. No code exists yet. Start with Phase 1 tasks below.  
+\*\*Status:\*\* Phase 1 in progress — Step 1 (scaffold) complete.  
 
 \*\*Owner:\*\* Hardware PdM managing e2e  
 
@@ -64,7 +64,7 @@ This is the same approach used by DS4Windows and NVIDIA GameStream. ViGEmBus and
 
 | Virtual controller bus | Nefarius.ViGEm.Client |
 
-| Input suppression | Nefarius.HidHide.Client |
+| Input suppression | Nefarius.Drivers.HidHide |
 
 | Profile storage | System.Text.Json → %APPDATA%\\ControlShift\\profiles\\ |
 
@@ -122,21 +122,16 @@ This is the same approach used by DS4Windows and NVIDIA GameStream. ViGEmBus and
 
 ```
 
-Nefarius.ViGEm.Client           >= 1.21.442.0
-
-Nefarius.HidHide.Client         latest
-
-Vortice.XInput                  >= 2.4.0
-
-HidSharp                        >= 2.1.0
-
-CommunityToolkit.WinUI          >= 8.0.0
-
-Microsoft.Extensions.Hosting    >= 8.0.0
-
-System.Text.Json                >= 8.0.0
-
-Serilog.Sinks.File              latest
+Nefarius.ViGEm.Client           1.21.256      (latest on NuGet; 1.21.442 does not exist)
+Nefarius.Drivers.HidHide        3.3.0         (package was renamed from Nefarius.HidHide.Client)
+Vortice.XInput                  2.4.2         (2.4.0 not published; 2.4.2 is nearest available)
+HidSharp                        2.1.0
+CommunityToolkit.WinUI.Extensions 8.2.251219  (monolithic CommunityToolkit.WinUI meta-package does not exist;
+                                               toolkit is split — add more sub-packages per phase as needed)
+Microsoft.Extensions.Hosting    8.0.0
+System.Text.Json                (no explicit reference — BCL in .NET 8;
+                                 Nefarius.Drivers.HidHide transitively brings 9.x which is compatible)
+Serilog.Sinks.File              5.0.0
 
 ```
 

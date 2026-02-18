@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ControlShift.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DECISION: Nefarius.ViGEm.Client latest available on NuGet is 1.21.256 (not 1.21.442 as originally specified in CLAUDE.md). Using latest available. -->
+    <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
+    <!-- DECISION: Nefarius.HidHide.Client was renamed to Nefarius.Drivers.HidHide on NuGet. Using correct package ID. -->
+    <PackageReference Include="Nefarius.Drivers.HidHide" Version="3.3.0" />
+    <!-- DECISION: Vortice.XInput 2.4.0 not on NuGet; nearest available is 2.4.2. Using 2.4.2. -->
+    <PackageReference Include="Vortice.XInput" Version="2.4.2" />
+    <PackageReference Include="HidSharp" Version="2.1.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <!-- DECISION: System.Text.Json is included in .NET 8 BCL; no explicit reference needed.
+         Nefarius.Drivers.HidHide 3.3.0 transitively pulls System.Text.Json 9.0.10, which is
+         compatible and higher than the 8.x built-in. Explicit pin removed to avoid NU1605 downgrade error. -->
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+  </ItemGroup>
+
+</Project>
