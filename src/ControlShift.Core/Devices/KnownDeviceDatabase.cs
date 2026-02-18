@@ -35,6 +35,8 @@ public sealed class KnownDeviceDatabase
                 return;
             }
 
+            _devicesByVidPid.Clear();
+
             foreach (var device in database.Devices)
             {
                 var key = $"{device.Vid}:{device.Pid}";
@@ -43,6 +45,15 @@ public sealed class KnownDeviceDatabase
 
             Logger.Information("Loaded {Count} known devices from {Path}",
                 _devicesByVidPid.Count, jsonPath);
+        }
+        catch (JsonException ex)
+        {
+            Logger.Error(ex, "Malformed JSON in known devices file {Path}", jsonPath);
+            throw;
+        }
+        catch (FileNotFoundException)
+        {
+            Logger.Warning("Known devices file not found at {Path}", jsonPath);
         }
         catch (Exception ex)
         {

@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <Content Include="Assets\controlshift.ico" />
+    <Content Include="..\..\devices\known-devices.json" Link="devices\known-devices.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

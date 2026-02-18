@@ -77,4 +77,35 @@ public class KnownDeviceDatabaseTests
         act.Should().NotThrow();
         db.Count.Should().Be(0);
     }
+
+    [Fact]
+    public void Load_ClearsPreviousDataOnReload()
+    {
+        var db = new KnownDeviceDatabase();
+        db.Load(TestDataPath);
+        db.Count.Should().Be(3);
+
+        // Loading again should replace, not accumulate
+        db.Load(TestDataPath);
+        db.Count.Should().Be(3);
+    }
+
+    [Fact]
+    public void Load_ThrowsOnMalformedJson()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(tempFile, "{ invalid json {{");
+            var db = new KnownDeviceDatabase();
+
+            var act = () => db.Load(tempFile);
+
+            act.Should().Throw<System.Text.Json.JsonException>();
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
 }

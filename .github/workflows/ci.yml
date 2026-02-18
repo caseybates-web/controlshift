@@ -46,6 +46,7 @@ jobs:
         --configuration ${{ matrix.configuration }}
         --no-build
         --verbosity normal
+        --results-directory TestResults
         --logger "trx;LogFileName=test-results.trx"
 
     - name: Upload test results
@@ -53,7 +54,7 @@ jobs:
       if: always()
       with:
         name: test-results-${{ matrix.configuration }}
-        path: tests/**/TestResults/*.trx
+        path: TestResults/*.trx
 
   build-app:
     runs-on: windows-latest

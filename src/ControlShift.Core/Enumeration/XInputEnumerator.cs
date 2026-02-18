@@ -31,8 +31,11 @@ public sealed class XInputEnumerator : IXInputEnumerator
                     if (XInput.GetBatteryInformation(i, BatteryDeviceType.Gamepad,
                         out BatteryInformation battery))
                     {
-                        batteryType = battery.BatteryType.ToString();
-                        batteryLevel = (byte)battery.BatteryLevel;
+                        batteryType = NormalizeBatteryType(battery.BatteryType);
+                        // Wired controllers report BatteryLevel=Full which is misleading
+                        batteryLevel = battery.BatteryType == Vortice.XInput.BatteryType.Wired
+                            ? null
+                            : (byte)battery.BatteryLevel;
                     }
 
                     slots.Add(new XInputSlot
@@ -67,4 +70,16 @@ public sealed class XInputEnumerator : IXInputEnumerator
 
         return slots.AsReadOnly();
     }
+
+    /// <summary>
+    /// Normalize Vortice BatteryType enum ToString() to canonical casing.
+    /// Vortice outputs "Nimh" but we use "NiMH" throughout the codebase.
+    /// </summary>
+    private static string NormalizeBatteryType(Vortice.XInput.BatteryType type) => type switch
+    {
+        Vortice.XInput.BatteryType.Wired => "Wired",
+        Vortice.XInput.BatteryType.Alkaline => "Alkaline",
+        Vortice.XInput.BatteryType.Nimh => "NiMH",
+        _ => "Unknown"
+    };
 }

@@ -38,13 +38,19 @@ public class MainViewModel
     /// <summary>
     /// Re-enumerate all controllers and update slot view models.
     /// Called on window open, manual refresh, and WM_DEVICECHANGE.
+    /// Runs enumeration off the UI thread to avoid blocking.
     /// </summary>
-    public void RefreshControllers()
+    public async Task RefreshControllersAsync()
     {
         try
         {
-            var xinputSlots = _xinputEnumerator.EnumerateSlots();
-            var hidDevices = _hidEnumerator.EnumerateGameControllers();
+            var (xinputSlots, hidDevices) = await Task.Run(() =>
+            {
+                var x = _xinputEnumerator.EnumerateSlots();
+                var h = _hidEnumerator.EnumerateGameControllers();
+                return (x, h);
+            });
+
             var controllers = _fingerprinter.IdentifyControllers(xinputSlots, hidDevices);
 
             for (int i = 0; i < 4 && i < controllers.Count; i++)

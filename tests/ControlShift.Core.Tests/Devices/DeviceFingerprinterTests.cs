@@ -154,6 +154,34 @@ public class DeviceFingerprinterTests
         result[0].DisplayName.Should().Be("Controller (Slot 2)");
     }
 
+    [Theory]
+    [InlineData("NiMH")]
+    [InlineData("Nimh")]
+    [InlineData("NIMH")]
+    public void IdentifyControllers_NiMHBattery_DetectedAsBluetooth(string batteryType)
+    {
+        var fp = CreateFingerprinter();
+
+        var xinput = new List<XInputSlot>
+        {
+            new() { SlotIndex = 1, IsConnected = true, BatteryType = batteryType, BatteryLevel = 2 }
+        };
+
+        var hid = new List<HidDeviceInfo>
+        {
+            new()
+            {
+                Vid = "045E", Pid = "02FD",
+                DevicePath = @"\\?\HID#VID_045E&PID_02FD#0001",
+                ProductName = "Xbox Wireless Controller"
+            }
+        };
+
+        var result = fp.IdentifyControllers(xinput, hid);
+
+        result.Should().Contain(c => c.ConnectionType == ConnectionType.Bluetooth);
+    }
+
     [Fact]
     public void IdentifyControllers_MultipleControllers_MatchesCorrectly()
     {

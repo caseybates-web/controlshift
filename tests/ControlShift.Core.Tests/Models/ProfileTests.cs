@@ -95,4 +95,45 @@ public class ProfileTests
         profile.SlotAssignments.Should().HaveCount(4);
         profile.SlotAssignments.Should().OnlyContain(s => s == null);
     }
+
+    [Fact]
+    public void Profile_SlotAssignments_PadsShortArray()
+    {
+        var profile = new Profile { ProfileName = "Short" };
+        profile.SlotAssignments = new[] { "path-a", "path-b" };
+
+        profile.SlotAssignments.Should().HaveCount(4);
+        profile.SlotAssignments[0].Should().Be("path-a");
+        profile.SlotAssignments[1].Should().Be("path-b");
+        profile.SlotAssignments[2].Should().BeNull();
+        profile.SlotAssignments[3].Should().BeNull();
+    }
+
+    [Fact]
+    public void Profile_SlotAssignments_TruncatesLongArray()
+    {
+        var profile = new Profile { ProfileName = "Long" };
+        profile.SlotAssignments = new[] { "a", "b", "c", "d", "e", "f" };
+
+        profile.SlotAssignments.Should().HaveCount(4);
+        profile.SlotAssignments[3].Should().Be("d");
+    }
+
+    [Fact]
+    public void Profile_DeserializesShortSlotAssignments()
+    {
+        var json = """
+        {
+          "profileName": "Short Slots",
+          "slotAssignments": ["only-one"]
+        }
+        """;
+
+        var profile = JsonSerializer.Deserialize<Profile>(json, JsonOptions);
+
+        profile.Should().NotBeNull();
+        profile!.SlotAssignments.Should().HaveCount(4);
+        profile.SlotAssignments[0].Should().Be("only-one");
+        profile.SlotAssignments[1].Should().BeNull();
+    }
 }

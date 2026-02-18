@@ -37,9 +37,22 @@ public sealed partial class MainWindow : Window
         // Build the slot cards in the UI
         BuildSlotCards();
 
-        // Initial enumeration
-        ViewModel.RefreshControllers();
+        // Dispose tray icon on window close to prevent ghost icons
+        this.Closed += OnClosed;
+
+        // Initial enumeration (fire-and-forget; errors logged inside)
+        _ = InitialRefreshAsync();
+    }
+
+    private async Task InitialRefreshAsync()
+    {
+        await ViewModel.RefreshControllersAsync();
         UpdateSlotCards();
+    }
+
+    private void OnClosed(object sender, WindowEventArgs args)
+    {
+        _trayIconService?.Dispose();
     }
 
     private void SetWindowSize(int width, int height)
@@ -91,9 +104,9 @@ public sealed partial class MainWindow : Window
             : "No controllers detected";
     }
 
-    private void RefreshButton_Click(object sender, RoutedEventArgs e)
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.RefreshControllers();
+        await ViewModel.RefreshControllersAsync();
         UpdateSlotCards();
         Logger.Information("Manual controller refresh triggered");
     }
