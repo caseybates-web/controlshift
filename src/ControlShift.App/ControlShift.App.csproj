@@ -8,17 +8,25 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x86;x64;arm64</Platforms>
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <!-- Default RID for development builds (dotnet run / dotnet build with no -r flag).
+         WindowsAppSDKSelfContained requires a specific RID to select the right native DLLs.
+         Override with -p:RuntimeIdentifier=win-arm64 for arm64 dev machines. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
-    <!-- Unpackaged mode: run directly via dotnet run without MSIX deployment.
-         EnableMsixTooling is kept — it provides the MRT/PRI build tooling that
-         the XAML compiler depends on even when not packaging.
-         WindowsPackageType=None disables MSIX packaging (and its architecture
-         check) while leaving the rest of the WinUI toolchain intact.
+    <!-- Unpackaged + self-contained Windows App SDK.
+         WindowsPackageType=None: disables MSIX packaging (and its architecture
+           check) while keeping the MRT/PRI build tooling the XAML compiler needs.
+         WindowsAppSDKSelfContained=true: copies all Windows App SDK runtime DLLs
+           flat next to the exe. The bootstrapper loads them from the app directory
+           instead of locating an installed MSIX framework package. This means the
+           app has zero runtime pre-installation requirements.
+         The Bootstrap.Initialize() P/Invoke call is NOT used in self-contained mode —
+           DLL loading is handled transparently before managed code starts.
          Package.appxmanifest is retained for future MSIX packaging (Phase 3). -->
     <WindowsPackageType>None</WindowsPackageType>
-    <!-- Suppress the XAML-generated Main so our Program.cs can call
-         Bootstrap.Initialize() before Application.Start(). -->
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Suppress the XAML-generated Main so Program.cs is the sole entry point. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

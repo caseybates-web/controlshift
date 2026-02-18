@@ -1,6 +1,3 @@
-using Microsoft.Windows.ApplicationModel.DynamicDependency;
-using Microsoft.UI.Xaml;
-
 namespace ControlShift.App;
 
 /// <summary>
@@ -8,28 +5,32 @@ namespace ControlShift.App;
 /// The XAML-generated Main in App.g.i.cs is suppressed via
 /// DISABLE_XAML_GENERATED_MAIN so this class is the sole entry point.
 /// </summary>
+/// <remarks>
+/// Bootstrap.Initialize() is intentionally absent here.
+///
+/// With WindowsAppSDKSelfContained=true the Windows App SDK runtime DLLs are
+/// copied flat next to the exe by MSBuild. The native bootstrap DLL
+/// (Microsoft.WindowsAppRuntime.Bootstrap.dll) loads the rest of the SDK from
+/// the application directory before any managed code runs — no MSIX framework
+/// package lookup is performed and no explicit Bootstrap.Initialize() call is
+/// needed or correct in self-contained mode.
+///
+/// Bootstrap.Initialize() is only for framework-dependent unpackaged apps where
+/// the SDK must be located from an installed MSIX package at runtime.
+/// </remarks>
 class Program
 {
     [STAThread]
     static void Main(string[] args)
     {
-        // Bootstrap the Windows App SDK for unpackaged execution.
-        // This enables ms-appx:// URI resolution, MRT Core, and all other
-        // Windows App SDK services. Must be called before Application.Start().
-        // 0x00010006 = major 1, minor 6 (SDK 1.6.x).
-        Bootstrap.Initialize(0x00010006);
-
-        // Mirror the initialization the XAML compiler would have generated.
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
-        Application.Start(p =>
+        Microsoft.UI.Xaml.Application.Start(p =>
         {
             var context = new Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(
                 Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
             System.Threading.SynchronizationContext.SetSynchronizationContext(context);
             _ = new App();
         });
-
-        Bootstrap.Shutdown();
     }
 }
