@@ -28,8 +28,7 @@
                            Foreground="{StaticResource CsTextSecondaryBrush}" />
             </StackPanel>
 
-            <Button Grid.Column="1" Content="&#xE713;"
-                    FontFamily="{ThemeResource SymbolThemeFontFamily}"
+            <Button Grid.Column="1" Content="Settings"
                     Background="Transparent" BorderThickness="0"
                     Foreground="{StaticResource CsTextSecondaryBrush}"
                     ToolTipService.ToolTip="Settings"
