@@ -13,7 +13,7 @@
     <!-- DECISION: Nefarius.HidHide.Client was renamed to Nefarius.Drivers.HidHide on NuGet. Using correct package ID. -->
     <PackageReference Include="Nefarius.Drivers.HidHide" Version="3.3.0" />
     <!-- DECISION: Vortice.XInput 2.4.0 not on NuGet; nearest available is 2.4.2. Using 2.4.2. -->
-    <PackageReference Include="Vortice.XInput" Version="2.4.2" />
+    <PackageReference Include="Vortice.XInput" Version="3.8.2" />
     <PackageReference Include="HidSharp" Version="2.1.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <!-- DECISION: System.Text.Json is included in .NET 8 BCL; no explicit reference needed.
