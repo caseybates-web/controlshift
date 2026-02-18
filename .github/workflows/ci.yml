@@ -57,13 +57,11 @@ jobs:
 
   build-app:
     runs-on: windows-latest
-    # App build is separate — XAML compilation requires Windows Desktop SDK
-    # and may need additional workloads on the runner.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        configuration: [Debug, Release]
+        configuration: [Release]
+        platform: [x64]
 
     steps:
     - uses: actions/checkout@v4
@@ -73,12 +71,13 @@ jobs:
       with:
         dotnet-version: 8.0.x
 
+    # WinUI 3 XAML compiler requires MSBuild (not dotnet build).
+    # See: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/ci-for-winui3
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
     - name: Restore App
-      run: dotnet restore src/ControlShift.App/ControlShift.App.csproj -p:Platform=x64
+      run: msbuild src/ControlShift.App/ControlShift.App.csproj /t:Restore /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }}
 
     - name: Build App
-      run: >
-        dotnet build src/ControlShift.App/ControlShift.App.csproj
-        --configuration ${{ matrix.configuration }}
-        -p:Platform=x64
-        --no-restore
+      run: msbuild src/ControlShift.App/ControlShift.App.csproj /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }}
