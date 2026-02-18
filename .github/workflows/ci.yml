@@ -10,6 +10,7 @@ jobs:
   build-and-test:
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         configuration: [Debug, Release]
 
@@ -22,10 +23,10 @@ jobs:
         dotnet-version: 8.0.x
 
     - name: Restore dependencies
-      run: dotnet restore ControlShift.sln
+      run: dotnet restore ControlShift.sln -p:Platform=x64
 
     - name: Build
-      run: dotnet build ControlShift.sln --configuration ${{ matrix.configuration }} --no-restore
+      run: dotnet build ControlShift.sln --configuration ${{ matrix.configuration }} -p:Platform=x64 --no-restore
 
     - name: Test
       run: >
