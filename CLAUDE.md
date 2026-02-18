@@ -136,8 +136,9 @@ App:
 Microsoft.WindowsAppSDK         1.6.x
 H.NotifyIcon.WinUI              2.1.0
 CommunityToolkit.WinUI.Controls.Primitives  8.1.x
-Microsoft.Extensions.Hosting    8.0.1
-Serilog.Extensions.Hosting      8.0.0
+Microsoft.Extensions.DependencyInjection  8.0.1
+Serilog                         4.2.0
+Serilog.Sinks.File              6.0.0
 ```
 
 Phase 2 (not yet added):

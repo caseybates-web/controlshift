@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.Extensions.DependencyInjection;
+using ControlShift.App.Services;
+using ControlShift.App.ViewModels;
 using ControlShift.Core.Enumeration;
 using ControlShift.Core.Devices;
 using Serilog;
@@ -55,5 +57,7 @@ public partial class App : Application
         services.AddSingleton<IDeviceFingerprinter, DeviceFingerprinter>();
         services.AddTransient<IXInputEnumerator, XInputEnumerator>();
         services.AddTransient<IHidEnumerator, HidEnumerator>();
+        services.AddTransient<MainViewModel>();
+        services.AddSingleton<Func<Window, TrayIconService>>(_ => window => new TrayIconService(window));
     }
 }

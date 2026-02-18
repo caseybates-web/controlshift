@@ -3,8 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using ControlShift.App.ViewModels;
 using ControlShift.App.Controls;
 using ControlShift.App.Services;
-using ControlShift.Core.Enumeration;
-using ControlShift.Core.Devices;
 using Serilog;
 
 namespace ControlShift.App;
@@ -23,10 +21,7 @@ public sealed partial class MainWindow : Window
     {
         this.InitializeComponent();
 
-        ViewModel = new MainViewModel(
-            App.Services.GetRequiredService<IXInputEnumerator>(),
-            App.Services.GetRequiredService<IHidEnumerator>(),
-            App.Services.GetRequiredService<IDeviceFingerprinter>());
+        ViewModel = App.Services.GetRequiredService<MainViewModel>();
 
         // Set window size to match PRD spec: 320x480
         SetWindowSize(320, 480);
@@ -67,7 +62,8 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            _trayIconService = new TrayIconService(this);
+            var factory = App.Services.GetRequiredService<Func<Window, TrayIconService>>();
+            _trayIconService = factory(this);
             _trayIconService.Initialize();
         }
         catch (Exception ex)
