@@ -26,4 +26,9 @@
     <ProjectReference Include="..\..\src\ControlShift.Core\ControlShift.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Copy known-devices.json to the test output directory so FromFile tests can load it. -->
+    <Content Include="..\..\devices\known-devices.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
