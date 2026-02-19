@@ -53,6 +53,12 @@ public sealed partial class MainWindow : Window
     // Initialized once in the constructor; reused on every A press (never recreated).
     private readonly DispatcherTimer _holdTimer;
 
+    // When true, OnCardGotFocus / OnCardLostFocus are no-ops.
+    // Set during CancelReorder/ConfirmReorder so that the Focus() call we issue
+    // doesn't let event handlers corrupt _focusedCardIndex while we're explicitly
+    // managing all state ourselves.
+    private bool _suppressFocusEvents;
+
     // ── Diagnostic logging ────────────────────────────────────────────────────
 
     // Timestamped log file in %TEMP% — written even in Release, survives a crash.
@@ -194,7 +200,10 @@ public sealed partial class MainWindow : Window
     private void NavTimer_Tick(object? sender, object e)
     {
         // Confirm the timer is still alive — visible in Debug Output and log file.
-        Debug.WriteLine($"NAV TICK #{_navTickCount} navTimer=0x{_navTimer.GetHashCode():X}");
+        Debug.WriteLine($"NAV TICK #{_navTickCount} navTimer=0x{_navTimer.GetHashCode():X} " +
+                        $"| windowActive={_windowActive} focusIdx={_focusedCardIndex} " +
+                        $"reorderIdx={_reorderingIndex} aHoldStart={_aHoldStart.HasValue} " +
+                        $"aEnteredReorder={_aHoldEnteredReorder} suppress={_suppressFocusEvents}");
         _navTickCount++;
 
         try
@@ -415,6 +424,9 @@ public sealed partial class MainWindow : Window
 
     private void OnCardGotFocus(int idx)
     {
+        // Suppressed during CancelReorder / ConfirmReorder — state is managed explicitly there.
+        if (_suppressFocusEvents) return;
+
         // If the user moved focus mid-hold, cancel the pending hold on the old card.
         if (_aHoldStart.HasValue && _focusedCardIndex >= 0 && _focusedCardIndex != idx)
         {
@@ -429,6 +441,9 @@ public sealed partial class MainWindow : Window
 
     private void OnCardLostFocus(int idx)
     {
+        // Suppressed during CancelReorder / ConfirmReorder — state is managed explicitly there.
+        if (_suppressFocusEvents) return;
+
         if (_focusedCardIndex == idx && _reorderingIndex < 0)
         {
             _focusedCardIndex = -1;
@@ -450,21 +465,40 @@ public sealed partial class MainWindow : Window
     private void ConfirmReorder()
     {
         if (_reorderingIndex < 0) return;
-        NavLog($"[ConfirmReorder] card now at idx {_reorderingIndex}");
-        _focusedCardIndex = _reorderingIndex;
-        _reorderingIndex  = -1;
-        UpdateCardStates();
+        int confirmIdx = _reorderingIndex;
+        NavLog($"[ConfirmReorder] card now at idx {confirmIdx}");
+
+        // Suppress focus events (same reason as CancelReorder).
+        _suppressFocusEvents = true;
+        try
+        {
+            _holdTimer.Stop();
+            _aHoldStart          = null;
+            _aHoldEnteredReorder = false;
+            _focusedCardIndex    = confirmIdx;
+            _reorderingIndex     = -1;
+
+            UpdateCardStates();
+            _cards[_focusedCardIndex].Focus(FocusState.Programmatic);
+        }
+        finally
+        {
+            _suppressFocusEvents = false;
+        }
+
+        NavLog($"[ConfirmReorder] done — focusIdx={_focusedCardIndex}");
     }
 
     private void CancelReorder()
     {
         if (_reorderingIndex < 0) return;
-        NavLog($"[CancelReorder] restoring from reorderIdx={_reorderingIndex}");
+        NavLog($"[CancelReorder] reorderIdx={_reorderingIndex}");
+
+        // Capture the card being moved BY REFERENCE before we restore _cards[] from
+        // _savedOrder — the index may point to a different card after the copy.
+        var focusCard = _cards[_reorderingIndex];
 
         // Clear XYFocus links before removing any element from the visual tree.
-        // WinUI's focus engine follows XYFocusUp/Down when an element loses focus
-        // on removal; if the link target is itself being removed, WinUI throws a
-        // native assertion (STATUS_ASSERTION_FAILURE).
         ClearXYFocusLinks();
 
         SlotPanel.Children.Clear();
@@ -472,15 +506,34 @@ public sealed partial class MainWindow : Window
         foreach (var card in _cards)
             SlotPanel.Children.Add(card);
 
-        // All cards are back in the tree — safe to restore XYFocus links now.
         UpdateXYFocusLinks();
 
-        _focusedCardIndex = _reorderingIndex;
-        _reorderingIndex  = -1;
+        // Find where the moved card landed after the order is restored.
+        int restoreIdx = Array.IndexOf(_cards, focusCard);
+        if (restoreIdx < 0) restoreIdx = 0;
 
-        UpdateCardStates();
-        _cards[_focusedCardIndex].Focus(FocusState.Programmatic);
-        NavLog("[CancelReorder] done");
+        // Suppress focus events for the duration of this operation.
+        // The Focus() call below will fire LostFocus then GotFocus events; without
+        // suppression, OnCardLostFocus would set _focusedCardIndex = -1 (because
+        // _reorderingIndex is already -1 at that point), breaking navigation.
+        _suppressFocusEvents = true;
+        try
+        {
+            _holdTimer.Stop();
+            _aHoldStart          = null;
+            _aHoldEnteredReorder = false;
+            _focusedCardIndex    = restoreIdx;
+            _reorderingIndex     = -1;
+
+            UpdateCardStates();
+            _cards[_focusedCardIndex].Focus(FocusState.Programmatic);
+        }
+        finally
+        {
+            _suppressFocusEvents = false;
+        }
+
+        NavLog($"[CancelReorder] done — focusIdx={_focusedCardIndex}");
     }
 
     private void MoveReorderingCard(int direction)
