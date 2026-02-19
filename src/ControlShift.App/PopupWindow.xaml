@@ -101,12 +101,13 @@
                                             Visibility="{x:Bind ConnectionVisibility, Mode=OneWay}" />
                                     </StackPanel>
 
-                                    <!-- Battery text -->
+                                    <!-- Battery glyph icon (Segoe Fluent Icons) -->
                                     <TextBlock
                                         Grid.Column="2"
-                                        Text="{x:Bind BatteryText, Mode=OneWay}"
+                                        Text="{x:Bind BatteryGlyph, Mode=OneWay}"
+                                        FontFamily="Segoe Fluent Icons"
                                         Foreground="#888888"
-                                        FontSize="12"
+                                        FontSize="20"
                                         VerticalAlignment="Center"
                                         Margin="8,0,0,0"
                                         Visibility="{x:Bind BatteryVisibility, Mode=OneWay}" />

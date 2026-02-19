@@ -65,8 +65,24 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         {
             Set(ref _batteryText, value);
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryGlyph)));
         }
     }
+
+    // ── Derived display (consumed by x:Bind in XAML) ─────────────────────────
+
+    /// <summary>
+    /// Maps BatteryText to a Segoe Fluent Icons glyph for the battery indicator.
+    /// Full = &#xEBAA;, Medium = &#xEBA6;, Low = &#xEBA2;, Empty = &#xEBA0;, Wired = &#xEBD4;.
+    /// </summary>
+    public string BatteryGlyph => BatteryText switch
+    {
+        "Full"   => "\xEBAA",   // BatteryFull
+        "Medium" => "\xEBA6",   // BatteryHalf
+        "Low"    => "\xEBA2",   // BatteryLow
+        "Empty"  => "\xEBA0",   // BatteryEmpty
+        _        => "\xEBD4"    // PlugConnected (wired / unknown)
+    };
 
     // ── Derived visibility (consumed by x:Bind in XAML) ──────────────────────
 
