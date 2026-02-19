@@ -1,124 +1,74 @@
-using ControlShift.Core.Models;
-using Serilog;
+using System.Text.Json;
+using ControlShift.Core.Enumeration;
 
 namespace ControlShift.Core.Devices;
 
 /// <summary>
-/// Matches XInput slots to HID devices using the known-devices database.
-/// Produces a unified ControllerInfo list for the UI layer.
+/// Matches enumerated HID devices against the known-devices.json database
+/// using VID+PID comparison. Devices that match are flagged as integrated gamepads.
 /// </summary>
+/// <remarks>
+/// DECISION: Matching is case-insensitive. HidSharp formats VID/PID as uppercase,
+/// and known-devices.json uses uppercase by convention, but defensive comparison
+/// costs nothing and prevents silent misses if either side drifts.
+///
+/// DECISION: Use a static factory (FromFile) for production and an injectable
+/// constructor (accepting a pre-loaded list) for unit tests. This avoids test
+/// infrastructure that writes temp files while keeping the production path clean.
+/// </remarks>
 public sealed class DeviceFingerprinter : IDeviceFingerprinter
 {
-    private static readonly ILogger Logger = Log.ForContext<DeviceFingerprinter>();
-    private readonly KnownDeviceDatabase _knownDevices;
+    private readonly IReadOnlyList<KnownDeviceEntry> _knownDevices;
 
-    public DeviceFingerprinter(KnownDeviceDatabase knownDevices)
+    /// <summary>
+    /// Accepts a pre-loaded list of known devices. Used directly in unit tests.
+    /// </summary>
+    public DeviceFingerprinter(IReadOnlyList<KnownDeviceEntry> knownDevices)
     {
         _knownDevices = knownDevices;
     }
 
-    public IReadOnlyList<ControllerInfo> IdentifyControllers(
-        IReadOnlyList<XInputSlot> xinputSlots,
-        IReadOnlyList<HidDeviceInfo> hidDevices)
+    /// <summary>
+    /// Loads known-devices.json from <paramref name="path"/> and returns a ready fingerprinter.
+    /// Call this once at application startup.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if the JSON is malformed or missing the "devices" array.</exception>
+    public static DeviceFingerprinter FromFile(string path)
     {
-        var controllers = new List<ControllerInfo>();
-        var usedDevicePaths = new HashSet<string>();
+        string json = File.ReadAllText(path);
+        var root = JsonSerializer.Deserialize<KnownDevicesRoot>(json)
+            ?? throw new InvalidOperationException($"Failed to deserialise known-devices.json at '{path}'.");
+        return new DeviceFingerprinter(root.Devices);
+    }
 
-        foreach (var slot in xinputSlots)
+    public IReadOnlyList<FingerprintedDevice> Fingerprint(IReadOnlyList<HidDeviceInfo> devices)
+    {
+        var results = new List<FingerprintedDevice>(devices.Count);
+
+        foreach (var device in devices)
         {
-            if (!slot.IsConnected)
+            var match = FindMatch(device.Vid, device.Pid);
+
+            results.Add(new FingerprintedDevice(
+                Device:              device,
+                IsIntegratedGamepad: match is not null,
+                KnownDeviceName:     match?.Name,
+                IsConfirmed:         match?.Confirmed ?? false));
+        }
+
+        return results;
+    }
+
+    private KnownDeviceEntry? FindMatch(string vid, string pid)
+    {
+        foreach (var entry in _knownDevices)
+        {
+            if (string.Equals(entry.Vid, vid, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(entry.Pid, pid, StringComparison.OrdinalIgnoreCase))
             {
-                controllers.Add(new ControllerInfo
-                {
-                    SlotIndex = slot.SlotIndex,
-                    IsConnected = false,
-                    ConnectionType = ConnectionType.Unknown
-                });
-                continue;
+                return entry;
             }
-
-            // DECISION: XInput does not expose VID/PID. We match XInput slots to HID
-            // devices using a heuristic approach:
-            // 1. Known integrated gamepads (from known-devices.json) get priority at slot 0
-            // 2. Remaining HID devices are matched to slots by order of discovery
-            // This is imperfect and will be refined with real hardware testing.
-            var matchedHid = TryMatchHidToSlot(slot, hidDevices, usedDevicePaths);
-
-            if (matchedHid is not null)
-                usedDevicePaths.Add(matchedHid.DevicePath);
-
-            var knownDevice = matchedHid is not null
-                ? _knownDevices.Lookup(matchedHid.Vid, matchedHid.Pid)
-                : null;
-
-            bool isIntegrated = knownDevice is not null;
-            var connectionType = DetermineConnectionType(slot, isIntegrated);
-            string displayName = knownDevice?.Name
-                ?? matchedHid?.ProductName
-                ?? $"Controller (Slot {slot.SlotIndex})";
-
-            controllers.Add(new ControllerInfo
-            {
-                SlotIndex = slot.SlotIndex,
-                IsConnected = true,
-                DisplayName = displayName,
-                ConnectionType = connectionType,
-                IsIntegratedGamepad = isIntegrated,
-                BatteryLevel = slot.BatteryLevel,
-                BatteryType = slot.BatteryType,
-                DevicePath = matchedHid?.DevicePath,
-                Vid = matchedHid?.Vid,
-                Pid = matchedHid?.Pid
-            });
         }
-
-        Logger.Information("Identified {Total} slots, {Connected} connected",
-            controllers.Count,
-            controllers.Count(c => c.IsConnected));
-
-        return controllers.AsReadOnly();
-    }
-
-    private HidDeviceInfo? TryMatchHidToSlot(
-        XInputSlot slot,
-        IReadOnlyList<HidDeviceInfo> hidDevices,
-        HashSet<string> usedPaths)
-    {
-        var available = hidDevices
-            .Where(h => !usedPaths.Contains(h.DevicePath))
-            .ToList();
-
-        if (available.Count == 0)
-            return null;
-
-        // For slot 0, prefer matching a known integrated gamepad first
-        if (slot.SlotIndex == 0)
-        {
-            var integrated = available.FirstOrDefault(h =>
-                _knownDevices.IsKnownIntegratedGamepad(h.Vid, h.Pid));
-            if (integrated is not null)
-                return integrated;
-        }
-
-        // DECISION: Fallback to first available unmatched HID device.
-        // This naive matching will be replaced with better heuristics
-        // once real hardware testing validates the approach.
-        return available.FirstOrDefault();
-    }
-
-    private static ConnectionType DetermineConnectionType(XInputSlot slot, bool isIntegrated)
-    {
-        if (isIntegrated)
-            return ConnectionType.Integrated;
-
-        // DECISION: Battery type "Wired" indicates USB connection.
-        // Wireless battery types (Alkaline, NiMH, Unknown) suggest Bluetooth.
-        // This heuristic works for most consumer controllers.
-        return slot.BatteryType?.ToUpperInvariant() switch
-        {
-            "WIRED" => ConnectionType.Usb,
-            "ALKALINE" or "NIMH" or "UNKNOWN" => ConnectionType.Bluetooth,
-            _ => ConnectionType.Unknown
-        };
+        return null;
     }
 }

@@ -5,21 +5,42 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>ControlShift.App</RootNamespace>
-    <AssemblyName>ControlShift</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x86;x64;arm64</Platforms>
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <!-- Default RID for development builds (dotnet run / dotnet build with no -r flag).
+         WindowsAppSDKSelfContained requires a specific RID to select the right native DLLs.
+         Override with -p:RuntimeIdentifier=win-arm64 for arm64 dev machines. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- Unpackaged + self-contained Windows App SDK.
+         WindowsPackageType=None: disables MSIX packaging (and its architecture
+           check) while keeping the MRT/PRI build tooling the XAML compiler needs.
+         WindowsAppSDKSelfContained=true: copies all Windows App SDK runtime DLLs
+           flat next to the exe. The bootstrapper loads them from the app directory
+           instead of locating an installed MSIX framework package. This means the
+           app has zero runtime pre-installation requirements.
+         The Bootstrap.Initialize() P/Invoke call is NOT used in self-contained mode —
+           DLL loading is handled transparently before managed code starts.
+         Package.appxmanifest is retained for future MSIX packaging (Phase 3). -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Suppress the XAML-generated Main so Program.cs is the sole entry point. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250205002" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
-    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.0" />
-    <PackageReference Include="CommunityToolkit.WinUI.Controls.Primitives" Version="8.1.240916" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <!-- DECISION: Microsoft.WindowsAppSDK 1.6.250205007 not on NuGet; nearest is 1.6.250228001. Using latest available. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" IncludeAssets="build" />
+    <!-- DECISION: CommunityToolkit.WinUI meta-package does not exist on NuGet; the toolkit is split into granular packages.
+         Using CommunityToolkit.WinUI.Extensions (covers NotifyIcon / tray helpers) as the primary reference.
+         Add more sub-packages (Controls, Animations, etc.) as needed in later phases. -->
+    <PackageReference Include="CommunityToolkit.WinUI.Extensions" Version="8.2.251219" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Serilog" Version="4.2.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
   </ItemGroup>

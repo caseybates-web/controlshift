@@ -1,222 +1,234 @@
-using FluentAssertions;
 using ControlShift.Core.Devices;
-using ControlShift.Core.Models;
+using ControlShift.Core.Enumeration;
 
 namespace ControlShift.Core.Tests.Devices;
 
 public class DeviceFingerprinterTests
 {
-    private static string TestDataPath =>
-        Path.Combine(AppContext.BaseDirectory, "TestData", "known-devices-test.json");
+    // ── fixtures ──────────────────────────────────────────────────────────────
 
-    private DeviceFingerprinter CreateFingerprinter()
+    private static readonly KnownDeviceEntry RogAlly =
+        new("ASUS ROG Ally MCU Gamepad", "0B05", "1ABE", Confirmed: true);
+
+    private static readonly KnownDeviceEntry LegionGo =
+        new("Lenovo Legion Go", "17EF", "6178", Confirmed: false);
+
+    private static DeviceFingerprinter MakeFingerprinter(params KnownDeviceEntry[] entries)
+        => new(entries);
+
+    private static HidDeviceInfo MakeHidDevice(string vid, string pid, string? productName = null)
+        => new(vid, pid, productName, $@"\\?\hid\{vid}_{pid}");
+
+    // ── empty inputs ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Fingerprint_NoDevices_ReturnsEmptyList()
     {
-        var db = new KnownDeviceDatabase();
-        db.Load(TestDataPath);
-        return new DeviceFingerprinter(db);
+        var fp = MakeFingerprinter(RogAlly);
+
+        var result = fp.Fingerprint([]);
+
+        Assert.Empty(result);
     }
 
     [Fact]
-    public void IdentifyControllers_MarksKnownDeviceAsIntegrated()
+    public void Fingerprint_NoKnownDevices_AllUnrecognised()
     {
-        var fp = CreateFingerprinter();
+        var fp = MakeFingerprinter();
+        var devices = new[] { MakeHidDevice("0B05", "1ABE") };
 
-        var xinput = new List<XInputSlot>
-        {
-            new() { SlotIndex = 0, IsConnected = true, BatteryType = "Wired" }
-        };
+        var result = fp.Fingerprint(devices);
 
-        var hid = new List<HidDeviceInfo>
-        {
-            new()
-            {
-                Vid = "0B05", Pid = "1ABE",
-                DevicePath = @"\\?\HID#VID_0B05&PID_1ABE#0001",
-                ProductName = "ROG Ally Gamepad"
-            }
-        };
+        Assert.Single(result);
+        Assert.False(result[0].IsIntegratedGamepad);
+    }
 
-        var result = fp.IdentifyControllers(xinput, hid);
+    // ── matched device ────────────────────────────────────────────────────────
 
-        result.Should().ContainSingle(c => c.IsIntegratedGamepad);
-        result[0].DisplayName.Should().Be("ASUS ROG Ally MCU Gamepad");
-        result[0].ConnectionType.Should().Be(ConnectionType.Integrated);
+    [Fact]
+    public void Fingerprint_KnownDevice_IsIntegratedGamepadTrue()
+    {
+        var fp = MakeFingerprinter(RogAlly);
+        var devices = new[] { MakeHidDevice("0B05", "1ABE") };
+
+        var result = fp.Fingerprint(devices);
+
+        Assert.True(result[0].IsIntegratedGamepad);
     }
 
     [Fact]
-    public void IdentifyControllers_DisconnectedSlotsAreEmpty()
+    public void Fingerprint_KnownDevice_KnownDeviceNamePopulated()
     {
-        var fp = CreateFingerprinter();
+        var fp = MakeFingerprinter(RogAlly);
+        var devices = new[] { MakeHidDevice("0B05", "1ABE") };
 
-        var xinput = new List<XInputSlot>
-        {
-            new() { SlotIndex = 0, IsConnected = false },
-            new() { SlotIndex = 1, IsConnected = false },
-            new() { SlotIndex = 2, IsConnected = false },
-            new() { SlotIndex = 3, IsConnected = false }
-        };
+        var result = fp.Fingerprint(devices);
 
-        var result = fp.IdentifyControllers(xinput, new List<HidDeviceInfo>());
-
-        result.Should().HaveCount(4);
-        result.Should().OnlyContain(c => !c.IsConnected);
+        Assert.Equal("ASUS ROG Ally MCU Gamepad", result[0].KnownDeviceName);
     }
 
     [Fact]
-    public void IdentifyControllers_WiredBatteryMeansUsb()
+    public void Fingerprint_ConfirmedKnownDevice_IsConfirmedTrue()
     {
-        var fp = CreateFingerprinter();
+        var fp = MakeFingerprinter(RogAlly); // confirmed: true
+        var devices = new[] { MakeHidDevice("0B05", "1ABE") };
 
-        var xinput = new List<XInputSlot>
-        {
-            new() { SlotIndex = 0, IsConnected = true, BatteryType = "Wired" }
-        };
+        var result = fp.Fingerprint(devices);
 
-        var hid = new List<HidDeviceInfo>
-        {
-            new()
-            {
-                Vid = "045E", Pid = "02FD",
-                DevicePath = @"\\?\HID#VID_045E&PID_02FD#0001",
-                ProductName = "Xbox Controller"
-            }
-        };
-
-        var result = fp.IdentifyControllers(xinput, hid);
-
-        result[0].ConnectionType.Should().Be(ConnectionType.Usb);
-        result[0].IsIntegratedGamepad.Should().BeFalse();
+        Assert.True(result[0].IsConfirmed);
     }
 
     [Fact]
-    public void IdentifyControllers_WirelessBatteryMeansBluetooth()
+    public void Fingerprint_UnconfirmedKnownDevice_IsConfirmedFalse()
     {
-        var fp = CreateFingerprinter();
+        var fp = MakeFingerprinter(LegionGo); // confirmed: false
+        var devices = new[] { MakeHidDevice("17EF", "6178") };
 
-        var xinput = new List<XInputSlot>
-        {
-            new() { SlotIndex = 1, IsConnected = true, BatteryType = "Alkaline", BatteryLevel = 2 }
-        };
+        var result = fp.Fingerprint(devices);
 
-        var hid = new List<HidDeviceInfo>
-        {
-            new()
-            {
-                Vid = "045E", Pid = "02FD",
-                DevicePath = @"\\?\HID#VID_045E&PID_02FD#0001",
-                ProductName = "Xbox Wireless Controller"
-            }
-        };
+        Assert.True(result[0].IsIntegratedGamepad);
+        Assert.False(result[0].IsConfirmed);
+    }
 
-        var result = fp.IdentifyControllers(xinput, hid);
+    // ── unmatched device ──────────────────────────────────────────────────────
 
-        result.Should().Contain(c => c.ConnectionType == ConnectionType.Bluetooth);
+    [Fact]
+    public void Fingerprint_UnknownDevice_IsIntegratedGamepadFalse()
+    {
+        var fp = MakeFingerprinter(RogAlly);
+        var devices = new[] { MakeHidDevice("045E", "028E") }; // generic Xbox controller
+
+        var result = fp.Fingerprint(devices);
+
+        Assert.False(result[0].IsIntegratedGamepad);
     }
 
     [Fact]
-    public void IdentifyControllers_UsesProductNameWhenNotKnown()
+    public void Fingerprint_UnknownDevice_KnownDeviceNameNull()
     {
-        var fp = CreateFingerprinter();
+        var fp = MakeFingerprinter(RogAlly);
+        var devices = new[] { MakeHidDevice("045E", "028E") };
 
-        var xinput = new List<XInputSlot>
-        {
-            new() { SlotIndex = 0, IsConnected = true, BatteryType = "Wired" }
-        };
+        var result = fp.Fingerprint(devices);
 
-        var hid = new List<HidDeviceInfo>
-        {
-            new()
-            {
-                Vid = "054C", Pid = "0CE6",
-                DevicePath = @"\\?\HID#VID_054C&PID_0CE6#0001",
-                ProductName = "DualSense Wireless Controller"
-            }
-        };
-
-        var result = fp.IdentifyControllers(xinput, hid);
-
-        result[0].DisplayName.Should().Be("DualSense Wireless Controller");
-        result[0].IsIntegratedGamepad.Should().BeFalse();
+        Assert.Null(result[0].KnownDeviceName);
+        Assert.False(result[0].IsConfirmed);
     }
 
-    [Fact]
-    public void IdentifyControllers_FallbackNameWhenNoHidMatch()
-    {
-        var fp = CreateFingerprinter();
-
-        var xinput = new List<XInputSlot>
-        {
-            new() { SlotIndex = 2, IsConnected = true, BatteryType = "Wired" }
-        };
-
-        var result = fp.IdentifyControllers(xinput, new List<HidDeviceInfo>());
-
-        result[0].DisplayName.Should().Be("Controller (Slot 2)");
-    }
+    // ── case-insensitive matching ─────────────────────────────────────────────
 
     [Theory]
-    [InlineData("NiMH")]
-    [InlineData("Nimh")]
-    [InlineData("NIMH")]
-    public void IdentifyControllers_NiMHBattery_DetectedAsBluetooth(string batteryType)
+    [InlineData("0b05", "1abe")]   // all lowercase
+    [InlineData("0B05", "1ABE")]   // all uppercase (normal)
+    [InlineData("0b05", "1ABE")]   // mixed
+    [InlineData("0B05", "1abe")]   // mixed other way
+    public void Fingerprint_VidPidCaseInsensitive_Matches(string vid, string pid)
     {
-        var fp = CreateFingerprinter();
+        var fp = MakeFingerprinter(RogAlly); // stored as "0B05" / "1ABE"
 
-        var xinput = new List<XInputSlot>
-        {
-            new() { SlotIndex = 1, IsConnected = true, BatteryType = batteryType, BatteryLevel = 2 }
-        };
+        var result = fp.Fingerprint([MakeHidDevice(vid, pid)]);
 
-        var hid = new List<HidDeviceInfo>
-        {
-            new()
-            {
-                Vid = "045E", Pid = "02FD",
-                DevicePath = @"\\?\HID#VID_045E&PID_02FD#0001",
-                ProductName = "Xbox Wireless Controller"
-            }
-        };
+        Assert.True(result[0].IsIntegratedGamepad);
+    }
 
-        var result = fp.IdentifyControllers(xinput, hid);
+    // ── partial match (wrong PID) ─────────────────────────────────────────────
 
-        result.Should().Contain(c => c.ConnectionType == ConnectionType.Bluetooth);
+    [Fact]
+    public void Fingerprint_SameVidDifferentPid_NoMatch()
+    {
+        var fp = MakeFingerprinter(RogAlly); // pid 1ABE
+        var devices = new[] { MakeHidDevice("0B05", "FFFF") };
+
+        var result = fp.Fingerprint(devices);
+
+        Assert.False(result[0].IsIntegratedGamepad);
     }
 
     [Fact]
-    public void IdentifyControllers_MultipleControllers_MatchesCorrectly()
+    public void Fingerprint_SamePidDifferentVid_NoMatch()
     {
-        var fp = CreateFingerprinter();
+        var fp = MakeFingerprinter(RogAlly); // vid 0B05
+        var devices = new[] { MakeHidDevice("FFFF", "1ABE") };
 
-        var xinput = new List<XInputSlot>
+        var result = fp.Fingerprint(devices);
+
+        Assert.False(result[0].IsIntegratedGamepad);
+    }
+
+    // ── mixed list ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Fingerprint_MixedDevices_OnlyMatchesAreIntegratedGamepads()
+    {
+        var fp = MakeFingerprinter(RogAlly, LegionGo);
+        var devices = new[]
         {
-            new() { SlotIndex = 0, IsConnected = true, BatteryType = "Wired" },
-            new() { SlotIndex = 1, IsConnected = true, BatteryType = "Alkaline", BatteryLevel = 3 }
+            MakeHidDevice("0B05", "1ABE"),  // ROG Ally — match
+            MakeHidDevice("045E", "028E"),  // Xbox 360 — no match
+            MakeHidDevice("17EF", "6178"),  // Legion Go — match
         };
 
-        var hid = new List<HidDeviceInfo>
+        var result = fp.Fingerprint(devices);
+
+        Assert.Equal(3, result.Count);
+        Assert.True(result[0].IsIntegratedGamepad);
+        Assert.Equal("ASUS ROG Ally MCU Gamepad", result[0].KnownDeviceName);
+
+        Assert.False(result[1].IsIntegratedGamepad);
+        Assert.Null(result[1].KnownDeviceName);
+
+        Assert.True(result[2].IsIntegratedGamepad);
+        Assert.Equal("Lenovo Legion Go", result[2].KnownDeviceName);
+    }
+
+    // ── original HidDeviceInfo is preserved ───────────────────────────────────
+
+    [Fact]
+    public void Fingerprint_OriginalDeviceInfoPreserved()
+    {
+        var fp = MakeFingerprinter(RogAlly);
+        var original = MakeHidDevice("0B05", "1ABE", productName: "ROG Ally Gamepad");
+
+        var result = fp.Fingerprint([original]);
+
+        Assert.Equal(original, result[0].Device);
+        Assert.Equal("ROG Ally Gamepad", result[0].Device.ProductName);
+        Assert.Equal(original.DevicePath, result[0].Device.DevicePath);
+    }
+
+    // ── FromFile loads and matches correctly ──────────────────────────────────
+
+    [Fact]
+    public void FromFile_LoadsKnownDevicesJson_MatchesCorrectly()
+    {
+        // Locate known-devices.json relative to the test assembly output directory.
+        // The file is at repo root /devices/known-devices.json and copied to output
+        // by the test project build (see .csproj Content item).
+        string path = Path.Combine(AppContext.BaseDirectory, "known-devices.json");
+        var fp = DeviceFingerprinter.FromFile(path);
+
+        // ROG Ally is confirmed: true in the shipped file
+        var rogAlly = MakeHidDevice("0B05", "1ABE");
+        var result = fp.Fingerprint([rogAlly]);
+
+        Assert.True(result[0].IsIntegratedGamepad);
+        Assert.Equal("ASUS ROG Ally MCU Gamepad", result[0].KnownDeviceName);
+        Assert.True(result[0].IsConfirmed);
+    }
+
+    [Fact]
+    public void FromFile_MalformedJson_ThrowsInvalidOperationException()
+    {
+        string path = Path.GetTempFileName();
+        try
         {
-            new()
-            {
-                Vid = "0B05", Pid = "1ABE",
-                DevicePath = @"\\?\HID#VID_0B05&PID_1ABE#0001",
-                ProductName = "ROG Ally Gamepad"
-            },
-            new()
-            {
-                Vid = "045E", Pid = "02FD",
-                DevicePath = @"\\?\HID#VID_045E&PID_02FD#0001",
-                ProductName = "Xbox Wireless Controller"
-            }
-        };
-
-        var result = fp.IdentifyControllers(xinput, hid);
-
-        result.Should().HaveCount(2);
-        // Slot 0 should match the known integrated gamepad
-        result[0].IsIntegratedGamepad.Should().BeTrue();
-        result[0].DisplayName.Should().Be("ASUS ROG Ally MCU Gamepad");
-        // Slot 1 should match the Xbox controller
-        result[1].IsIntegratedGamepad.Should().BeFalse();
-        result[1].DisplayName.Should().Contain("Xbox");
+            File.WriteAllText(path, "not json at all {{{{");
+            Assert.Throws<System.Text.Json.JsonException>(
+                () => DeviceFingerprinter.FromFile(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 }

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <assemblyIdentity version="1.0.0.0" name="ControlShift"/>
-  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+  <assemblyIdentity version="1.0.0.0" name="ControlShift.App"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
-      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+      <requestedPrivileges>
         <!-- DECISION: asInvoker for Phase 1 (enumeration only). Phase 2 will need
              requireAdministrator for HidHide/ViGEm driver operations. -->
         <requestedExecutionLevel level="asInvoker" uiAccess="false" />

@@ -1,0 +1,178 @@
+<Window
+    x:Class="ControlShift.App.PopupWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:ControlShift.App.ViewModels">
+
+    <!-- Xbox dark theme: near-black background, green accents, clean typography -->
+    <Grid RequestedTheme="Dark" Background="#FF1A1A1A">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- Header -->
+            <RowDefinition Height="*"    />   <!-- Scroll content -->
+            <RowDefinition Height="Auto" />   <!-- Footer -->
+        </Grid.RowDefinitions>
+
+        <!-- ── Header ─────────────────────────────────────────────────────── -->
+        <Grid Grid.Row="0" Padding="20,20,20,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="ControlShift"
+                           FontSize="18" FontWeight="SemiBold"
+                           Foreground="White"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="v0.1"
+                           FontSize="10" Opacity="0.4"
+                           Foreground="#9E9E9E"
+                           VerticalAlignment="Center"
+                           Margin="8,0,0,0" />
+            </StackPanel>
+
+            <!-- Close button hides the window rather than destroying it. -->
+            <Button Grid.Column="1"
+                    Content="&#xE711;"
+                    Click="CloseButton_Click"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="8" CornerRadius="6"
+                    FontFamily="Segoe Fluent Icons" FontSize="12"
+                    Foreground="#666666"
+                    VerticalAlignment="Center"
+                    ToolTipService.ToolTip="Hide" />
+        </Grid>
+
+        <!-- ── Scroll content ─────────────────────────────────────────────── -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                      Padding="20,20,20,0">
+            <StackPanel Spacing="0">
+
+                <!-- Slot cards P1–P4 -->
+                <ItemsRepeater ItemsSource="{x:Bind Slots}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Spacing="8" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SlotViewModel">
+                            <Border
+                                Background="#FF242424"
+                                CornerRadius="10"
+                                Padding="16" MinHeight="72">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Player badge -->
+                                    <Border
+                                        Grid.Column="0"
+                                        Background="#FF107C10"
+                                        CornerRadius="8"
+                                        Width="32" Height="32"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,14,0">
+                                        <TextBlock
+                                            Text="{x:Bind PlayerLabel}"
+                                            Foreground="White"
+                                            FontWeight="Bold"
+                                            FontSize="13"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center" />
+                                    </Border>
+
+                                    <!-- Device name + connection type -->
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center">
+                                        <TextBlock
+                                            Text="{x:Bind DeviceName, Mode=OneWay}"
+                                            Foreground="White"
+                                            FontSize="14" FontWeight="Medium"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Text="{x:Bind ConnectionLabel, Mode=OneWay}"
+                                            Foreground="#666666"
+                                            FontSize="11"
+                                            Margin="0,2,0,0"
+                                            Visibility="{x:Bind ConnectionVisibility, Mode=OneWay}" />
+                                    </StackPanel>
+
+                                    <!-- Battery text -->
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        Text="{x:Bind BatteryText, Mode=OneWay}"
+                                        Foreground="#888888"
+                                        FontSize="12"
+                                        VerticalAlignment="Center"
+                                        Margin="8,0,0,0"
+                                        Visibility="{x:Bind BatteryVisibility, Mode=OneWay}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+
+                <!-- UNASSIGNED section label -->
+                <TextBlock
+                    Text="UNASSIGNED"
+                    Foreground="#9E9E9E"
+                    FontSize="11"
+                    FontWeight="SemiBold"
+                    Margin="4,16,0,8" />
+
+                <!-- Unassigned device list (populated in Step 6) -->
+                <ItemsRepeater ItemsSource="{x:Bind UnassignedDevices}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Spacing="8" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <Border Background="#FF242424" CornerRadius="10" Padding="16">
+                                <TextBlock
+                                    Text="{x:Bind}"
+                                    Foreground="White"
+                                    FontSize="13" />
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+
+                <!-- Empty-state placeholder -->
+                <Border
+                    Background="#FF242424"
+                    CornerRadius="10"
+                    Padding="16"
+                    Visibility="{x:Bind UnassignedEmptyVisibility, Mode=OneWay}">
+                    <TextBlock
+                        Text="No unassigned controllers"
+                        Foreground="#555555"
+                        FontSize="13"
+                        HorizontalAlignment="Center" />
+                </Border>
+
+                <Rectangle Height="8" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Footer ─────────────────────────────────────────────────────── -->
+        <Border
+            Grid.Row="2"
+            BorderBrush="#222222"
+            BorderThickness="0,1,0,0"
+            Padding="20,12">
+            <Button
+                Content="Exit ControlShift"
+                Click="ExitButton_Click"
+                Background="Transparent"
+                Foreground="#666666"
+                BorderThickness="0"
+                Padding="4,4"
+                FontSize="12"
+                HorizontalAlignment="Right" />
+        </Border>
+    </Grid>
+</Window>

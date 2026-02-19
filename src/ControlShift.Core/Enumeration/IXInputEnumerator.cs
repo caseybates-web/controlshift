@@ -1,11 +1,7 @@
-using ControlShift.Core.Models;
-
 namespace ControlShift.Core.Enumeration;
 
-/// <summary>
-/// Polls XInput slots 0–3 and returns their current state.
-/// </summary>
 public interface IXInputEnumerator
 {
-    IReadOnlyList<XInputSlot> EnumerateSlots();
+    /// <summary>Polls all four XInput slots and returns their current state.</summary>
+    IReadOnlyList<XInputSlotInfo> GetSlots();
 }

@@ -1,85 +1,84 @@
 using Vortice.XInput;
-using ControlShift.Core.Models;
-using Serilog;
 
 namespace ControlShift.Core.Enumeration;
 
 /// <summary>
-/// Enumerates XInput controllers across all 4 slots using Vortice.XInput.
+/// Polls XInput slots 0–3 via Vortice.XInput and returns live state.
+/// Can be called from any thread.
 /// </summary>
+/// <remarks>
+/// API notes (Vortice.XInput 3.8.2):
+/// - GetCapabilities / GetBatteryInformation both return bool (true = success / connected).
+/// - userIndex is uint, not int.
+/// - BatteryType.Nimh (not NiMH) is the NiMH enum value.
+/// - DeviceType enum only has one value (Gamepad = 1); SubType carries the finer
+///   distinction (Gamepad, Wheel, etc.) but we don't surface that in v1.
+/// </remarks>
 public sealed class XInputEnumerator : IXInputEnumerator
 {
-    private static readonly ILogger Logger = Log.ForContext<XInputEnumerator>();
-
-    public IReadOnlyList<XInputSlot> EnumerateSlots()
+    public IReadOnlyList<XInputSlotInfo> GetSlots()
     {
-        var slots = new List<XInputSlot>(4);
-
-        for (uint i = 0; i < 4; i++)
-        {
-            try
-            {
-                bool connected = XInput.GetState(i, out _);
-
-                if (connected)
-                {
-                    XInput.GetCapabilities(i, DeviceQueryType.Any, out Capabilities caps);
-
-                    string? batteryType = null;
-                    byte? batteryLevel = null;
-
-                    if (XInput.GetBatteryInformation(i, BatteryDeviceType.Gamepad,
-                        out BatteryInformation battery))
-                    {
-                        batteryType = NormalizeBatteryType(battery.BatteryType);
-                        // Wired controllers report BatteryLevel=Full which is misleading
-                        batteryLevel = battery.BatteryType == Vortice.XInput.BatteryType.Wired
-                            ? null
-                            : (byte)battery.BatteryLevel;
-                    }
-
-                    slots.Add(new XInputSlot
-                    {
-                        SlotIndex = (int)i,
-                        IsConnected = true,
-                        DeviceType = caps.Type.ToString(),
-                        DeviceSubType = caps.SubType.ToString(),
-                        BatteryLevel = batteryLevel,
-                        BatteryType = batteryType
-                    });
-                }
-                else
-                {
-                    slots.Add(new XInputSlot
-                    {
-                        SlotIndex = (int)i,
-                        IsConnected = false
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning(ex, "Failed to query XInput slot {Slot}", i);
-                slots.Add(new XInputSlot
-                {
-                    SlotIndex = (int)i,
-                    IsConnected = false
-                });
-            }
-        }
-
-        return slots.AsReadOnly();
+        var results = new XInputSlotInfo[4];
+        for (int i = 0; i < 4; i++)
+            results[i] = QuerySlot(i);
+        return results;
     }
 
-    /// <summary>
-    /// Normalize Vortice BatteryType enum ToString() to canonical casing.
-    /// Vortice outputs "Nimh" but we use "NiMH" throughout the codebase.
-    /// </summary>
-    internal static string NormalizeBatteryType(Vortice.XInput.BatteryType type) => type switch
+    private static XInputSlotInfo QuerySlot(int slotIndex)
     {
-        Vortice.XInput.BatteryType.Wired => "Wired",
-        Vortice.XInput.BatteryType.Alkaline => "Alkaline",
-        Vortice.XInput.BatteryType.Nimh => "NiMH",
-        _ => "Unknown"
-    };
+        var userIndex = (uint)slotIndex;
+
+        // GetCapabilities returns true when a controller is connected at this slot.
+        bool isConnected = XInput.GetCapabilities(userIndex, DeviceQueryType.Any, out Capabilities caps);
+
+        if (!isConnected)
+        {
+            return new XInputSlotInfo(
+                slotIndex,
+                IsConnected: false,
+                XInputDeviceType.Unknown,
+                XInputConnectionType.Wired,
+                BatteryPercent: null);
+        }
+
+        // DeviceType enum only has Gamepad = 1 in this library version.
+        // Everything else falls through to Unknown.
+        var deviceType = caps.Type == DeviceType.Gamepad
+            ? XInputDeviceType.Gamepad
+            : XInputDeviceType.Unknown;
+
+        // GetBatteryInformation returns true when information is available.
+        // BatteryType.Wired (1) and BatteryType.Disconnected (0) / Unknown (255)
+        // indicate no battery; Alkaline (2) and Nimh (3) indicate wireless.
+        bool hasBattery = XInput.GetBatteryInformation(
+            userIndex, BatteryDeviceType.Gamepad, out BatteryInformation battery);
+
+        bool isWireless = hasBattery
+            && battery.BatteryType != BatteryType.Wired
+            && battery.BatteryType != BatteryType.Disconnected
+            && battery.BatteryType != BatteryType.Unknown;
+
+        int? batteryPercent = null;
+        if (isWireless)
+        {
+            // DECISION: XInput reports 4 discrete battery levels. We map them to
+            // representative percentages so the UI can display a meaningful value
+            // without implying false precision.
+            batteryPercent = battery.BatteryLevel switch
+            {
+                BatteryLevel.Full   => 100,
+                BatteryLevel.Medium => 60,
+                BatteryLevel.Low    => 20,
+                BatteryLevel.Empty  => 0,
+                _                   => null,
+            };
+        }
+
+        return new XInputSlotInfo(
+            slotIndex,
+            IsConnected: true,
+            deviceType,
+            isWireless ? XInputConnectionType.Wireless : XInputConnectionType.Wired,
+            batteryPercent);
+    }
 }

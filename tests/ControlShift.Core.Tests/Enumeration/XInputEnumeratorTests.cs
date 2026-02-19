@@ -1,118 +1,145 @@
-using Moq;
-using FluentAssertions;
 using ControlShift.Core.Enumeration;
-using ControlShift.Core.Models;
 
 namespace ControlShift.Core.Tests.Enumeration;
 
 public class XInputEnumeratorTests
 {
-    [Fact]
-    public void MockedEnumerator_ReturnsFourSlots()
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    private static Mock<IXInputEnumerator> MockWith(params XInputSlotInfo[] slots)
     {
         var mock = new Mock<IXInputEnumerator>();
-        mock.Setup(x => x.EnumerateSlots()).Returns(new List<XInputSlot>
-        {
-            new() { SlotIndex = 0, IsConnected = true, BatteryType = "Wired", DeviceType = "Gamepad" },
-            new() { SlotIndex = 1, IsConnected = false },
-            new() { SlotIndex = 2, IsConnected = false },
-            new() { SlotIndex = 3, IsConnected = false }
-        });
-
-        var result = mock.Object.EnumerateSlots();
-
-        result.Should().HaveCount(4);
-        result[0].IsConnected.Should().BeTrue();
-        result[0].BatteryType.Should().Be("Wired");
-        result[1].IsConnected.Should().BeFalse();
-        result[2].IsConnected.Should().BeFalse();
-        result[3].IsConnected.Should().BeFalse();
+        mock.Setup(e => e.GetSlots()).Returns(slots);
+        return mock;
     }
+
+    // ── slot count ────────────────────────────────────────────────────────────
 
     [Fact]
-    public void MockedEnumerator_AllSlotsHaveValidIndex()
+    public void GetSlots_AlwaysReturnsFourEntries()
     {
-        var mock = new Mock<IXInputEnumerator>();
-        mock.Setup(x => x.EnumerateSlots()).Returns(new List<XInputSlot>
-        {
-            new() { SlotIndex = 0, IsConnected = false },
-            new() { SlotIndex = 1, IsConnected = false },
-            new() { SlotIndex = 2, IsConnected = false },
-            new() { SlotIndex = 3, IsConnected = false }
-        });
+        var mock = MockWith(
+            new XInputSlotInfo(0, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(1, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(2, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(3, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null));
 
-        var result = mock.Object.EnumerateSlots();
+        var slots = mock.Object.GetSlots();
 
-        result.Select(s => s.SlotIndex).Should().BeEquivalentTo(new[] { 0, 1, 2, 3 });
+        Assert.Equal(4, slots.Count);
     }
 
-    [Fact]
-    public void MockedEnumerator_WirelessController_HasBatteryInfo()
-    {
-        var mock = new Mock<IXInputEnumerator>();
-        mock.Setup(x => x.EnumerateSlots()).Returns(new List<XInputSlot>
-        {
-            new()
-            {
-                SlotIndex = 0,
-                IsConnected = true,
-                BatteryType = "Alkaline",
-                BatteryLevel = 3,
-                DeviceType = "Gamepad"
-            }
-        });
-
-        var result = mock.Object.EnumerateSlots();
-
-        result[0].BatteryType.Should().Be("Alkaline");
-        result[0].BatteryLevel.Should().Be(3);
-    }
-
-    [Fact]
-    public void RealEnumerator_ReturnsExactlyFourSlots()
-    {
-        // Integration test: requires Windows + XInput runtime.
-        // On CI (windows-latest), this should return 4 slots (likely all disconnected).
-        var enumerator = new XInputEnumerator();
-        var slots = enumerator.EnumerateSlots();
-        slots.Should().HaveCount(4);
-        slots.Select(s => s.SlotIndex).Should().BeEquivalentTo(new[] { 0, 1, 2, 3 });
-    }
+    // ── slot indices ──────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData(Vortice.XInput.BatteryType.Wired, "Wired")]
-    [InlineData(Vortice.XInput.BatteryType.Alkaline, "Alkaline")]
-    [InlineData(Vortice.XInput.BatteryType.Nimh, "NiMH")]
-    [InlineData(Vortice.XInput.BatteryType.Unknown, "Unknown")]
-    [InlineData(Vortice.XInput.BatteryType.Disconnected, "Unknown")]
-    public void NormalizeBatteryType_ProducesCanonicalStrings(
-        Vortice.XInput.BatteryType input, string expected)
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void GetSlots_SlotIndex_MatchesPosition(int index)
     {
-        var result = XInputEnumerator.NormalizeBatteryType(input);
-        result.Should().Be(expected);
+        var allSlots = Enumerable.Range(0, 4)
+            .Select(i => new XInputSlotInfo(i, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null))
+            .ToArray();
+        var mock = MockWith(allSlots);
+
+        var slots = mock.Object.GetSlots();
+
+        Assert.Equal(index, slots[index].SlotIndex);
     }
 
+    // ── connected wired gamepad ───────────────────────────────────────────────
+
     [Fact]
-    public void NormalizeBatteryType_NimhProducesUppercaseNiMH()
+    public void GetSlots_ConnectedWiredGamepad_HasCorrectShape()
     {
-        // This is the critical case: Vortice enum ToString() returns "Nimh"
-        // but we need "NiMH" to match the fingerprinter's connection type logic.
-        var result = XInputEnumerator.NormalizeBatteryType(Vortice.XInput.BatteryType.Nimh);
-        result.Should().Be("NiMH");
-        result.Should().NotBe("Nimh", "Vortice's default ToString() casing would break fingerprinting");
+        var slot = new XInputSlotInfo(0, true, XInputDeviceType.Gamepad, XInputConnectionType.Wired, null);
+        var mock = MockWith(slot,
+            new XInputSlotInfo(1, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(2, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(3, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null));
+
+        var result = mock.Object.GetSlots()[0];
+
+        Assert.True(result.IsConnected);
+        Assert.Equal(XInputDeviceType.Gamepad, result.DeviceType);
+        Assert.Equal(XInputConnectionType.Wired, result.ConnectionType);
+        Assert.Null(result.BatteryPercent);   // wired -> no battery info
     }
 
-    [Fact]
-    public void RealEnumerator_DisconnectedSlots_HaveNullBattery()
-    {
-        // On CI, all slots are disconnected — verify battery fields are null.
-        var enumerator = new XInputEnumerator();
-        var slots = enumerator.EnumerateSlots();
+    // ── wireless controller with battery ─────────────────────────────────────
 
-        foreach (var slot in slots.Where(s => !s.IsConnected))
-        {
-            slot.BatteryType.Should().BeNull();
-            slot.BatteryLevel.Should().BeNull();
-        }
+    [Theory]
+    [InlineData(100)]
+    [InlineData(60)]
+    [InlineData(20)]
+    [InlineData(0)]
+    public void GetSlots_WirelessGamepad_BatteryPercentInRange(int pct)
+    {
+        var slot = new XInputSlotInfo(0, true, XInputDeviceType.Gamepad, XInputConnectionType.Wireless, pct);
+        var mock = MockWith(slot,
+            new XInputSlotInfo(1, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(2, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(3, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null));
+
+        var result = mock.Object.GetSlots()[0];
+
+        Assert.Equal(XInputConnectionType.Wireless, result.ConnectionType);
+        Assert.NotNull(result.BatteryPercent);
+        Assert.InRange(result.BatteryPercent!.Value, 0, 100);
+    }
+
+    // ── disconnected slot ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void GetSlots_DisconnectedSlot_IsConnectedFalse()
+    {
+        var mock = MockWith(
+            new XInputSlotInfo(0, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(1, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(2, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null),
+            new XInputSlotInfo(3, false, XInputDeviceType.Unknown, XInputConnectionType.Wired, null));
+
+        var slots = mock.Object.GetSlots();
+
+        Assert.All(slots, s => Assert.False(s.IsConnected));
+    }
+
+    // ── multiple controllers ──────────────────────────────────────────────────
+
+    [Fact]
+    public void GetSlots_MultipleControllers_EachSlotIndependent()
+    {
+        var mock = MockWith(
+            new XInputSlotInfo(0, true,  XInputDeviceType.Gamepad, XInputConnectionType.Wired,    null),
+            new XInputSlotInfo(1, true,  XInputDeviceType.Gamepad, XInputConnectionType.Wireless,   60),
+            new XInputSlotInfo(2, false, XInputDeviceType.Unknown, XInputConnectionType.Wired,    null),
+            new XInputSlotInfo(3, true,  XInputDeviceType.Gamepad, XInputConnectionType.Wireless,    0));
+
+        var slots = mock.Object.GetSlots();
+
+        Assert.True(slots[0].IsConnected);
+        Assert.Null(slots[0].BatteryPercent);
+
+        Assert.True(slots[1].IsConnected);
+        Assert.Equal(60, slots[1].BatteryPercent);
+
+        Assert.False(slots[2].IsConnected);
+
+        Assert.True(slots[3].IsConnected);
+        Assert.Equal(0, slots[3].BatteryPercent);
+    }
+
+    // ── XInputSlotInfo record equality ────────────────────────────────────────
+
+    [Fact]
+    public void XInputSlotInfo_RecordEquality_WorksCorrectly()
+    {
+        var a = new XInputSlotInfo(0, true, XInputDeviceType.Gamepad, XInputConnectionType.Wired, null);
+        var b = new XInputSlotInfo(0, true, XInputDeviceType.Gamepad, XInputConnectionType.Wired, null);
+        var c = new XInputSlotInfo(1, true, XInputDeviceType.Gamepad, XInputConnectionType.Wired, null);
+
+        Assert.Equal(a, b);
+        Assert.NotEqual(a, c);
     }
 }

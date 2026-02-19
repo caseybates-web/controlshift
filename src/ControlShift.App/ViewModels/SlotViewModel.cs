@@ -1,110 +1,87 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using ControlShift.Core.Models;
+using Microsoft.UI.Xaml;
 
 namespace ControlShift.App.ViewModels;
 
 /// <summary>
-/// View model for a single controller slot (P1–P4).
-/// Implements INotifyPropertyChanged for data-binding support.
+/// View model for a single XInput player slot card (P1–P4).
+/// Implements INotifyPropertyChanged so x:Bind Mode=OneWay updates work in Step 6
+/// when live enumeration data is wired in.
 /// </summary>
-public class SlotViewModel : INotifyPropertyChanged
+public sealed class SlotViewModel : INotifyPropertyChanged
 {
-    private int _slotIndex;
-    private bool _isConnected;
-    private string? _displayName;
-    private ConnectionType _connectionType;
-    private bool _isIntegratedGamepad;
-    private byte? _batteryLevel;
-    private string? _batteryType;
-    private string? _devicePath;
-    private string? _vid;
-    private string? _pid;
+    public event PropertyChangedEventHandler? PropertyChanged;
 
-    public int SlotIndex
+    private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
-        get => _slotIndex;
-        set => SetField(ref _slotIndex, value);
+        if (!EqualityComparer<T>.Default.Equals(field, value))
+        {
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
     }
+
+    // ── Slot identity (fixed at construction) ─────────────────────────────────
+
+    public int    SlotIndex   { get; }
+    public string PlayerLabel => $"P{SlotIndex + 1}";
+
+    // ── Live data (updated in Step 6) ─────────────────────────────────────────
+
+    private bool   _isConnected;
+    private string _deviceName       = "—";
+    private string _connectionLabel  = string.Empty;
+    private string _batteryText      = string.Empty;
 
     public bool IsConnected
     {
         get => _isConnected;
-        set => SetField(ref _isConnected, value);
+        set
+        {
+            Set(ref _isConnected, value);
+            // Derived visibility properties change whenever IsConnected changes.
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConnectionVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
+        }
     }
 
-    public string? DisplayName
+    public string DeviceName
     {
-        get => _displayName;
-        set => SetField(ref _displayName, value);
+        get => _deviceName;
+        set => Set(ref _deviceName, value);
     }
 
-    public ConnectionType ConnectionType
+    public string ConnectionLabel
     {
-        get => _connectionType;
-        set => SetField(ref _connectionType, value);
+        get => _connectionLabel;
+        set => Set(ref _connectionLabel, value);
     }
 
-    public bool IsIntegratedGamepad
+    public string BatteryText
     {
-        get => _isIntegratedGamepad;
-        set => SetField(ref _isIntegratedGamepad, value);
+        get => _batteryText;
+        set
+        {
+            Set(ref _batteryText, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
+        }
     }
 
-    public byte? BatteryLevel
-    {
-        get => _batteryLevel;
-        set => SetField(ref _batteryLevel, value);
-    }
+    // ── Derived visibility (consumed by x:Bind in XAML) ──────────────────────
 
-    public string? BatteryType
-    {
-        get => _batteryType;
-        set => SetField(ref _batteryType, value);
-    }
+    /// <summary>Collapses the connection-type label when the slot is empty.</summary>
+    public Visibility ConnectionVisibility =>
+        IsConnected ? Visibility.Visible : Visibility.Collapsed;
 
-    public string? DevicePath
-    {
-        get => _devicePath;
-        set => SetField(ref _devicePath, value);
-    }
+    /// <summary>Collapses the battery readout when the slot is empty or wired.</summary>
+    public Visibility BatteryVisibility =>
+        !string.IsNullOrEmpty(BatteryText) ? Visibility.Visible : Visibility.Collapsed;
 
-    public string? Vid
-    {
-        get => _vid;
-        set => SetField(ref _vid, value);
-    }
+    // ── Construction ──────────────────────────────────────────────────────────
 
-    public string? Pid
+    public SlotViewModel(int slotIndex)
     {
-        get => _pid;
-        set => SetField(ref _pid, value);
-    }
-
-    /// <summary>
-    /// Update this view model from a ControllerInfo model.
-    /// </summary>
-    public void UpdateFrom(ControllerInfo info)
-    {
-        SlotIndex = info.SlotIndex;
-        IsConnected = info.IsConnected;
-        DisplayName = info.DisplayName;
-        ConnectionType = info.ConnectionType;
-        IsIntegratedGamepad = info.IsIntegratedGamepad;
-        BatteryLevel = info.BatteryLevel;
-        BatteryType = info.BatteryType;
-        DevicePath = info.DevicePath;
-        Vid = info.Vid;
-        Pid = info.Pid;
-    }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
-    {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-        field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        return true;
+        SlotIndex = slotIndex;
     }
 }

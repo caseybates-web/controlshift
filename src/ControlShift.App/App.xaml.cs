@@ -1,79 +1,98 @@
+using ControlShift.App.Tray;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.Extensions.DependencyInjection;
-using ControlShift.App.Services;
-using ControlShift.App.ViewModels;
-using ControlShift.Core.Enumeration;
-using ControlShift.Core.Devices;
-using Serilog;
+using WinRT.Interop;
 
 namespace ControlShift.App;
 
-/// <summary>
-/// WinUI 3 application entry point. Configures DI, logging, and the main window.
-/// </summary>
 public partial class App : Application
 {
-    private Window? _mainWindow;
+    private PopupWindow?    _popup;
+    private TrayIconService? _tray;
 
-    public static IServiceProvider Services { get; private set; } = null!;
+    // Used to debounce show-after-deactivation: when the user clicks the tray icon
+    // while the popup is visible, the popup loses focus (which hides it) before
+    // TrayIconActivated fires. Without the debounce we'd immediately reshow it.
+    private long _hiddenByDeactivationAt = long.MinValue;
+    private const long DebounceMs = 300;
 
     public App()
     {
         this.InitializeComponent();
-
-        // Configure Serilog to write diagnostics to %APPDATA%\ControlShift\logs\
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Debug()
-            .WriteTo.File(
-                Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "ControlShift", "logs", "controlshift-.log"),
-                rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: 7)
-            .CreateLogger();
-
-        // Log unhandled exceptions so crashes on target hardware leave a diagnostic trail
-        // in %APPDATA%\ControlShift\logs\ instead of silently dying.
-        this.UnhandledException += (sender, e) =>
-        {
-            Log.Fatal(e.Exception, "Unhandled exception");
-            Log.CloseAndFlush();
-        };
-
-        Log.Information("ControlShift starting up");
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        // Configure dependency injection
-        var services = new ServiceCollection();
-        ConfigureServices(services);
-        Services = services.BuildServiceProvider();
+        // Create the popup window once. It is never destroyed while the app is running;
+        // "closing" hides it. The tray icon keeps the app alive.
+        _popup = new PopupWindow();
 
-        // Load known-devices database (bundled to output via csproj Content item).
-        // Guard against malformed JSON — continue with empty database rather than crash.
-        var knownDb = Services.GetRequiredService<KnownDeviceDatabase>();
-        var devicesJsonPath = Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
-        try
+        // Auto-hide when the popup loses focus (click-away dismissal).
+        _popup.Activated += (_, e) =>
         {
-            knownDb.Load(devicesJsonPath);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to load known-devices database — continuing with empty database");
-        }
+            if (e.WindowActivationState == WindowActivationState.Deactivated)
+            {
+                _hiddenByDeactivationAt = Environment.TickCount64;
+                _popup.AppWindow.Hide();
+            }
+        };
 
-        _mainWindow = new MainWindow();
-        _mainWindow.Activate();
+        _popup.ExitRequested += OnExitRequested;
+
+        // Set up the tray icon, subclassing the popup's HWND so we receive both
+        // tray callbacks and WM_DEVICECHANGE on the same window.
+        var hwnd       = WindowNative.GetWindowHandle(_popup);
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+
+        _tray = new TrayIconService(hwnd, dispatcher);
+        _tray.TrayIconActivated += OnTrayIconActivated;
+        _tray.DeviceChanged     += OnDeviceChanged;
+
+        // Register crash-safety cleanup so the tray icon is removed even if the
+        // app crashes. (HidHide/ViGEm safety hooks are added in Phase 2.)
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => Cleanup();
     }
 
-    private static void ConfigureServices(ServiceCollection services)
+    // ── Tray icon ─────────────────────────────────────────────────────────────
+
+    private void OnTrayIconActivated()
     {
-        services.AddSingleton<KnownDeviceDatabase>();
-        services.AddSingleton<IDeviceFingerprinter, DeviceFingerprinter>();
-        services.AddTransient<IXInputEnumerator, XInputEnumerator>();
-        services.AddTransient<IHidEnumerator, HidEnumerator>();
-        services.AddTransient<MainViewModel>();
-        services.AddSingleton<Func<Window, TrayIconService>>(_ => window => new TrayIconService(window));
+        if (_popup is null) return;
+
+        if (_popup.AppWindow.IsVisible)
+        {
+            // Popup is already visible — the impending Deactivated event will hide it.
+            // Don't toggle; let deactivation do its job.
+            return;
+        }
+
+        // If the popup was just hidden by a deactivation event (user clicked the tray
+        // icon to dismiss it), don't immediately reshow it.
+        if (Environment.TickCount64 - _hiddenByDeactivationAt < DebounceMs)
+            return;
+
+        _popup.ShowNearTray();
+    }
+
+    // ── Device change ─────────────────────────────────────────────────────────
+
+    private void OnDeviceChanged()
+    {
+        // Step 5: no-op — the popup shows static placeholder data.
+        // Step 6 replaces this with a call to re-enumerate and refresh the slot cards.
+    }
+
+    // ── Exit ──────────────────────────────────────────────────────────────────
+
+    private void OnExitRequested()
+    {
+        Cleanup();
+        Exit();
+    }
+
+    private void Cleanup()
+    {
+        _tray?.Dispose();
+        _tray = null;
     }
 }

@@ -1,14 +1,12 @@
-using ControlShift.Core.Models;
+using ControlShift.Core.Enumeration;
 
 namespace ControlShift.Core.Devices;
 
-/// <summary>
-/// Matches XInput slots and HID devices against the known-devices database
-/// to produce a unified list of identified controllers.
-/// </summary>
 public interface IDeviceFingerprinter
 {
-    IReadOnlyList<ControllerInfo> IdentifyControllers(
-        IReadOnlyList<XInputSlot> xinputSlots,
-        IReadOnlyList<HidDeviceInfo> hidDevices);
+    /// <summary>
+    /// Annotates each HID device with fingerprinting results — whether it matches
+    /// a known integrated gamepad, and if so, its friendly name and confirmation status.
+    /// </summary>
+    IReadOnlyList<FingerprintedDevice> Fingerprint(IReadOnlyList<HidDeviceInfo> devices);
 }
