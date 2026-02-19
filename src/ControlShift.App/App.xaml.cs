@@ -32,6 +32,14 @@ public partial class App : Application
                 retainedFileCountLimit: 7)
             .CreateLogger();
 
+        // Log unhandled exceptions so crashes on target hardware leave a diagnostic trail
+        // in %APPDATA%\ControlShift\logs\ instead of silently dying.
+        this.UnhandledException += (sender, e) =>
+        {
+            Log.Fatal(e.Exception, "Unhandled exception");
+            Log.CloseAndFlush();
+        };
+
         Log.Information("ControlShift starting up");
     }
 
