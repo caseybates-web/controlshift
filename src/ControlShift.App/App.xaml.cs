@@ -42,10 +42,18 @@ public partial class App : Application
         ConfigureServices(services);
         Services = services.BuildServiceProvider();
 
-        // Load known-devices database (bundled to output via csproj Content item)
+        // Load known-devices database (bundled to output via csproj Content item).
+        // Guard against malformed JSON — continue with empty database rather than crash.
         var knownDb = Services.GetRequiredService<KnownDeviceDatabase>();
         var devicesJsonPath = Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
-        knownDb.Load(devicesJsonPath);
+        try
+        {
+            knownDb.Load(devicesJsonPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load known-devices database — continuing with empty database");
+        }
 
         _mainWindow = new MainWindow();
         _mainWindow.Activate();

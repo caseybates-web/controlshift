@@ -30,6 +30,19 @@ public sealed class TrayIconService : IDisposable
         // with a native NotifyIcon. H.NotifyIcon is the most widely used
         // community library for WinUI 3 tray icon support.
 
+        // Load the tray icon from the bundled .ico file.
+        // H.NotifyIcon uses GeneratedIconSource to render the .ico in the system tray.
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "controlshift.ico");
+        if (File.Exists(iconPath))
+        {
+            using var stream = File.OpenRead(iconPath);
+            _trayIcon.Icon = new System.Drawing.Icon(stream);
+        }
+        else
+        {
+            Logger.Warning("Tray icon not found at {Path}, using default", iconPath);
+        }
+
         _trayIcon.LeftClickCommand = new RelayCommand(ToggleWindow);
 
         Logger.Information("Tray icon initialized");
