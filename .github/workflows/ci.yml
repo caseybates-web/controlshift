@@ -78,7 +78,7 @@ jobs:
       uses: microsoft/setup-msbuild@v2
 
     - name: Restore App
-      run: msbuild src/ControlShift.App/ControlShift.App.csproj /t:Restore /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }}
+      run: dotnet restore src/ControlShift.App/ControlShift.App.csproj -r win-${{ matrix.platform }}
 
     - name: Build App
-      run: msbuild src/ControlShift.App/ControlShift.App.csproj /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }}
+      run: msbuild src/ControlShift.App/ControlShift.App.csproj /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /restore:false
