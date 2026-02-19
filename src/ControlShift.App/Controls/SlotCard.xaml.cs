@@ -177,20 +177,24 @@ public sealed partial class SlotCard : UserControl
 
     /// <summary>
     /// Smooth scale-swell animation using the Composition API (avoids Storyboard overhead).
-    /// Animates the card's visual scale to <paramref name="toScale"/> over 100ms ease-in-out.
-    /// Safe to call before layout — returns immediately if the element is not yet loaded.
+    /// Animates the UserControl's own visual — one level above CardBorder — so the scale
+    /// overflows into the 8px margin the parent SlotPanel sets on each card rather than
+    /// being clipped by the ScrollViewer's ScrollContentPresenter clip rect.
     /// </summary>
     private void AnimateScale(double toScale)
     {
         // Guard: compositor is not available until the element is in the visual tree.
-        if (!IsLoaded || CardBorder.ActualWidth == 0) return;
+        if (!IsLoaded || ActualWidth == 0) return;
 
-        var visual = ElementCompositionPreview.GetElementVisual(CardBorder);
+        // Animate 'this' (the UserControl visual), not CardBorder.
+        // The UserControl's parent (StackPanel) does not apply a compositor clip, so
+        // the scaled visual can safely expand into the surrounding margin without clipping.
+        var visual = ElementCompositionPreview.GetElementVisual(this);
 
-        // Scale from center of the card.
+        // Scale from center of the UserControl (which equals the card surface).
         visual.CenterPoint = new Vector3(
-            (float)(CardBorder.ActualWidth  / 2),
-            (float)(CardBorder.ActualHeight / 2),
+            (float)(ActualWidth  / 2),
+            (float)(ActualHeight / 2),
             0f);
 
         var compositor = visual.Compositor;

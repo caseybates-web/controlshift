@@ -31,8 +31,8 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,6,16,6">
             <StackPanel Spacing="0">
 
-                <!-- Spacing="0" — card-to-card gap comes from the 4px Margin on each
-                     CardBorder: bottom 4px + top 4px = 8px visible gap, same as before. -->
+                <!-- Spacing="0" — gap comes from each SlotCard's Margin (4px top + 4px bottom
+                     = 8px between card surfaces); 8px sides give the swell room to expand. -->
                 <StackPanel x:Name="SlotPanel" Spacing="0" />
 
                 <!-- UNASSIGNED section: hidden until Core surfaces unmatched HID devices -->

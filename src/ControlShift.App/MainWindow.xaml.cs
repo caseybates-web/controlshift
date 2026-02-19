@@ -86,9 +86,13 @@ public sealed partial class MainWindow : Window
         SetWindowSize(400, 700);
 
         // Build 4 fixed slot cards — one per XInput slot P1–P4.
+        // Margin="8,4,8,4": 8px horizontal gives the 1.03 swell room within the
+        // ScrollContentPresenter clip; 4px vertical keeps the 8px card-to-card gap
+        // (4 bottom + 4 top) while guarding the first/last card's swell at the
+        // top/bottom viewport edge. Preserved intact through all reorder moves.
         for (int i = 0; i < 4; i++)
         {
-            _cards[i] = new SlotCard();
+            _cards[i] = new SlotCard { Margin = new Thickness(8, 4, 8, 4) };
             SlotPanel.Children.Add(_cards[i]);
         }
 
