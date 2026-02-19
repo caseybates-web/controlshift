@@ -6,11 +6,11 @@ A lightweight Windows system tray app that lets users reorder XInput controller 
 
 
 
-\*\*Status:\*\* Phase 1 in progress — Step 1 (scaffold) complete.  
+\*\*Status:\*\* Phase 1 complete. Enumeration, fingerprinting, and tray UI are implemented and passing CI. Phase 2 (ViGEm + HidHide controller reordering) is next.
 
-\*\*Owner:\*\* Hardware PdM managing e2e  
+\*\*Owner:\*\* Hardware PdM managing e2e
 
-\*\*License:\*\* MIT (open source, public release)  
+\*\*License:\*\* MIT (open source, public release)
 
 \*\*Target:\*\* Windows 10 (19041) minimum, Windows 11 supported
 
@@ -87,18 +87,19 @@ This is the same approach used by DS4Windows and NVIDIA GameStream. ViGEmBus and
 ```
 
 /src/ControlShift.App/          # WinUI 3 application (UI layer only)
+&nbsp; /ViewModels/                   # MainViewModel, SlotViewModel (INPC)
+&nbsp; /Controls/                     # SlotCard custom control
+&nbsp; /Services/                     # TrayIconService
+&nbsp; /Converters/                   # Value converters for XAML binding
 
 /src/ControlShift.Core/         # All controller logic — no UI dependency
-
 &nbsp; /Enumeration/                 # XInput + HID device discovery
+&nbsp; /Devices/                     # DeviceFingerprinter, KnownDeviceDatabase
+&nbsp; /Models/                      # Data models (XInputSlot, Profile, etc.)
 
-&nbsp; /Forwarding/                  # Input forwarding loop (BackgroundService)
+/src/ControlShift.Installer/    # Placeholder for Phase 2 packaging
 
-&nbsp; /Profiles/                    # Profile model + JSON persistence
-
-&nbsp; /Devices/                     # ViGEm + HidHide wrappers
-
-/src/ControlShift.Installer/    # WiX installer / MSIX packaging
+/tests/ControlShift.Core.Tests/ # xUnit + Moq + FluentAssertions
 
 /devices/known-devices.json     # VID/PID database for integrated gamepads
 
@@ -106,7 +107,7 @@ This is the same approach used by DS4Windows and NVIDIA GameStream. ViGEmBus and
 
 /docs/                          # Architecture notes
 
-/.github/workflows/             # CI: build, sign, release
+/.github/workflows/             # CI: build + test (dotnet), build-app (MSBuild)
 
 ```
 
@@ -116,23 +117,36 @@ This is the same approach used by DS4Windows and NVIDIA GameStream. ViGEmBus and
 
 
 
-\## NuGet Packages (install these first)
+\## NuGet Packages (currently installed)
 
 
 
+Core:
+```
+Vortice.XInput                  3.6.2
+HidSharp                        2.6.4
+System.Text.Json                8.0.5
+Serilog                         4.2.0
+Serilog.Sinks.File              6.0.0
+Microsoft.Extensions.Hosting.Abstractions  8.0.1
 ```
 
-Nefarius.ViGEm.Client           1.21.256      (latest on NuGet; 1.21.442 does not exist)
-Nefarius.Drivers.HidHide        3.3.0         (package was renamed from Nefarius.HidHide.Client)
-Vortice.XInput                  2.4.2         (2.4.0 not published; 2.4.2 is nearest available)
-HidSharp                        2.1.0
-CommunityToolkit.WinUI.Extensions 8.2.251219  (monolithic CommunityToolkit.WinUI meta-package does not exist;
-                                               toolkit is split — add more sub-packages per phase as needed)
+Nefarius.ViGEm.Client           1.21.256      (latest on NuGet; pinned early for Phase 2)
+Nefarius.Drivers.HidHide        3.3.0         (renamed from Nefarius.HidHide.Client)
+System.Text.Json                (transitive from Nefarius.Drivers.HidHide — no explicit pin)
 Microsoft.Extensions.Hosting    8.0.0
-System.Text.Json                (no explicit reference — BCL in .NET 8;
-                                 Nefarius.Drivers.HidHide transitively brings 9.x which is compatible)
-Serilog.Sinks.File              5.0.0
+Serilog                         4.2.0
+Serilog.Sinks.File              6.0.0
+```
 
+App:
+```
+Microsoft.WindowsAppSDK         1.6.250228001
+Microsoft.Windows.SDK.BuildTools  10.0.26100.1742
+CommunityToolkit.WinUI.Extensions  8.2.251219  (tray helpers; split toolkit — add sub-packages as needed)
+Microsoft.Extensions.Hosting    8.0.0
+Serilog                         4.2.0
+Serilog.Sinks.File              6.0.0
 ```
 
 
@@ -147,29 +161,16 @@ Serilog.Sinks.File              5.0.0
 
 ```bash
 
-\# Restore and build
+\# Build and test Core library (works with dotnet CLI)
+dotnet build src/ControlShift.Core/ControlShift.Core.csproj
+dotnet test tests/ControlShift.Core.Tests/ControlShift.Core.Tests.csproj
 
-dotnet restore
+\# Build App (requires MSBuild — WinUI 3 XAML compiler needs it)
+msbuild src/ControlShift.App/ControlShift.App.csproj /t:Restore /p:Configuration=Release /p:Platform=x64
+msbuild src/ControlShift.App/ControlShift.App.csproj /p:Configuration=Release /p:Platform=x64
 
-dotnet build
-
-
-
-\# Run the app (requires Windows, admin for driver operations)
-
+\# Run the app (requires Windows, no admin needed for Phase 1)
 dotnet run --project src/ControlShift.App
-
-
-
-\# Run tests
-
-dotnet test
-
-
-
-\# Package MSIX
-
-dotnet publish src/ControlShift.Installer -c Release
 
 ```
 
@@ -179,85 +180,17 @@ dotnet publish src/ControlShift.Installer -c Release
 
 
 
-\## Phase 1 — Build In This Exact Order
+\## Phase 1 — COMPLETE
 
+All Phase 1 steps are implemented and passing CI:
 
-
-Do not skip ahead. Each step should compile and be manually testable before moving to the next.
-
-
-
-\### Step 1 — Scaffold solution
-
-\- Create solution file with three projects: App, Core, Installer
-
-\- App references Core. Installer references App.
-
-\- Target net8.0-windows10.0.19041.0
-
-\- Set up WinUI 3 in App project (Package.appxmanifest, required capabilities)
-
-
-
-\### Step 2 — XInput enumeration
-
-\- Create `XInputEnumerator` in Core/Enumeration/
-
-\- Poll XInput slots 0–3 using Vortice.XInput
-
-\- Return: slot index, IsConnected, BatteryLevel (if wireless), DeviceType
-
-\- Write unit tests with mock data
-
-
-
-\### Step 3 — HID enumeration
-
-\- Create `HidEnumerator` in Core/Enumeration/
-
-\- Use HidSharp to list all HID game controllers
-
-\- Return: VID (hex), PID (hex), ProductString, DevicePath
-
-\- Write unit tests with mock data
-
-
-
-\### Step 4 — Device fingerprinting
-
-\- Create `DeviceFingerprinter` in Core/Devices/
-
-\- Load `/devices/known-devices.json` at startup
-
-\- Match HID devices by VID+PID to identify integrated gamepad
-
-\- Flag matched device as `IsIntegratedGamepad = true`
-
-\- \*\*Do this early\*\* — hardware access means we can validate all OEM VID/PIDs now
-
-
-
-\### Step 5 — Tray popup UI
-
-\- WinUI 3 popup window: 320×480px, dark theme (#0F172A background)
-
-\- NotifyIcon in system tray (CommunityToolkit.WinUI)
-
-\- Display 4 slot cards (P1–P4): device name, connection type badge, battery %
-
-\- Show unassigned controllers below the 4 slots
-
-\- Subscribe to WM\_DEVICECHANGE — refresh list on connect/disconnect
-
-
-
-\### Step 6 — Wire enumeration to UI
-
-\- On tray popup open: call XInputEnumerator + HidEnumerator
-
-\- Match results via DeviceFingerprinter
-
-\- Populate slot cards with live data
+\- Solution scaffolded (App, Core, Installer placeholder, Tests)
+\- XInput enumeration (Vortice.XInput, battery normalization, wired level suppression)
+\- HID enumeration (HidSharp, gamepad/joystick usage page filter)
+\- Device fingerprinting (VID/PID lookup, case-insensitive battery type matching)
+\- Tray popup UI (H.NotifyIcon.WinUI, 320x480 dark theme, 4 slot cards)
+\- Async enumeration wired to UI with INotifyPropertyChanged
+\- CI: dotnet build+test (Debug/Release) + MSBuild app build (Release/x64)
 
 
 

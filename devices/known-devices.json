@@ -4,6 +4,8 @@
     { "name": "ASUS ROG Ally X MCU Gamepad", "vid": "0B05", "pid": "1B4C", "confirmed": false },
     { "name": "Lenovo Legion Go", "vid": "17EF", "pid": "6178", "confirmed": false },
     { "name": "GPD Win 4", "vid": "2833", "pid": "0004", "confirmed": false },
+    { "name": "GPD Win Max 2", "vid": "2833", "pid": "0003", "confirmed": false },
+    { "name": "Steam Deck (XInput mode)", "vid": "28DE", "pid": "11FF", "confirmed": false },
     { "name": "Ayaneo 2", "vid": "2810", "pid": "2003", "confirmed": false },
     { "name": "OneXPlayer Mini", "vid": "045E", "pid": "028E", "confirmed": false }
   ]

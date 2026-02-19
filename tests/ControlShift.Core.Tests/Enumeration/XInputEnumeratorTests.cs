@@ -1,5 +1,4 @@
 using ControlShift.Core.Enumeration;
-using Moq;
 
 namespace ControlShift.Core.Tests.Enumeration;
 

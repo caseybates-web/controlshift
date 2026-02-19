@@ -41,11 +41,17 @@
          Add more sub-packages (Controls, Animations, etc.) as needed in later phases. -->
     <PackageReference Include="CommunityToolkit.WinUI.Extensions" Version="8.2.251219" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ControlShift.Core\ControlShift.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\controlshift.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\devices\known-devices.json" Link="devices\known-devices.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
