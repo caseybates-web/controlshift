@@ -7,7 +7,8 @@ namespace ControlShift.App;
 
 public partial class App : Application
 {
-    private PopupWindow?    _popup;
+    private SplashWindow?    _splash;
+    private PopupWindow?     _popup;
     private TrayIconService? _tray;
 
     // Used to debounce show-after-deactivation: when the user clicks the tray icon
@@ -23,6 +24,18 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // Show the splash screen first. The rest of initialization
+        // happens in OnSplashCompleted after the animation finishes.
+        _splash = new SplashWindow();
+        _splash.SplashCompleted += OnSplashCompleted;
+        _splash.Activate();
+    }
+
+    private void OnSplashCompleted()
+    {
+        // Splash is done and closing itself.
+        _splash = null;
+
         // Create the popup window once. It is never destroyed while the app is running;
         // "closing" hides it. The tray icon keeps the app alive.
         _popup = new PopupWindow();
