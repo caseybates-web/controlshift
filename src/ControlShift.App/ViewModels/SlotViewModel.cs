@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using ControlShift.Core.Devices;
 using ControlShift.Core.Enumeration;
-using Microsoft.UI.Xaml;
 
 namespace ControlShift.App.ViewModels;
 
@@ -33,27 +32,20 @@ public sealed class SlotViewModel : INotifyPropertyChanged
     private bool   _isIntegrated;
     private string _deviceName      = "—";
     private string _connectionLabel = string.Empty;
+    private string _vendorBrand     = string.Empty;
+    private string _vidPid          = string.Empty;
     private string _batteryText     = string.Empty;
 
     public bool IsConnected
     {
         get => _isConnected;
-        set
-        {
-            Set(ref _isConnected, value);
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConnectionVisibility)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
-        }
+        set => Set(ref _isConnected, value);
     }
 
     public bool IsIntegrated
     {
         get => _isIntegrated;
-        set
-        {
-            Set(ref _isIntegrated, value);
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IntegratedBadgeVisibility)));
-        }
+        set => Set(ref _isIntegrated, value);
     }
 
     public string DeviceName
@@ -68,28 +60,33 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         set => Set(ref _connectionLabel, value);
     }
 
+    /// <summary>Brand from known-vendors.json (e.g. "Xbox", "PlayStation"). Empty string when unknown.</summary>
+    public string VendorBrand
+    {
+        get => _vendorBrand;
+        set => Set(ref _vendorBrand, value);
+    }
+
+    /// <summary>VID:PID in uppercase hex (e.g. "045E:02FD"). Empty string when no HID match.</summary>
+    public string VidPid
+    {
+        get => _vidPid;
+        set => Set(ref _vidPid, value);
+    }
+
     public string BatteryText
     {
         get => _batteryText;
-        set
-        {
-            Set(ref _batteryText, value);
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
-        }
+        set => Set(ref _batteryText, value);
     }
 
-    // ── Derived visibility ────────────────────────────────────────────────────
-
-    public Visibility ConnectionVisibility =>
-        IsConnected && !string.IsNullOrEmpty(ConnectionLabel)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
-    public Visibility BatteryVisibility =>
-        !string.IsNullOrEmpty(BatteryText) ? Visibility.Visible : Visibility.Collapsed;
-
-    public Visibility IntegratedBadgeVisibility =>
-        IsIntegrated ? Visibility.Visible : Visibility.Collapsed;
+    /// <summary>Segoe MDL2 Assets glyph for the battery level. Empty when no battery info.</summary>
+    public string BatteryGlyph => BatteryText switch
+    {
+        _ when string.IsNullOrEmpty(BatteryText)   => string.Empty,
+        _ when BatteryText.EndsWith('%')            => "\uEBA7",  // battery icon
+        _                                           => "\uE83E",  // plug icon (wired/unknown)
+    };
 
     // ── Construction ──────────────────────────────────────────────────────────
 
@@ -101,29 +98,40 @@ public sealed class SlotViewModel : INotifyPropertyChanged
     // ── Update ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Updates all live data from a polled XInput slot and its fingerprinted HID match.
-    /// Pass null for <paramref name="integratedMatch"/> when no integrated device is detected.
+    /// Updates all live data from a <see cref="MatchedController"/> produced by
+    /// <see cref="ControlShift.Core.Devices.IControllerMatcher"/>.
     /// </summary>
-    public void UpdateFrom(XInputSlotInfo slot, FingerprintedDevice? integratedMatch)
+    public void UpdateFrom(MatchedController mc)
     {
-        IsConnected  = slot.IsConnected;
-        IsIntegrated = integratedMatch?.IsIntegratedGamepad == true;
+        IsConnected  = mc.IsConnected;
+        IsIntegrated = mc.IsIntegratedGamepad;
 
-        if (!slot.IsConnected)
+        if (!mc.IsConnected)
         {
             DeviceName      = "—";
             ConnectionLabel = string.Empty;
+            VendorBrand     = string.Empty;
+            VidPid          = string.Empty;
             BatteryText     = string.Empty;
             return;
         }
 
-        DeviceName = integratedMatch?.KnownDeviceName
-                     ?? (IsIntegrated ? "Built-in Controller" : "Controller");
+        // Device name: HID product string → known-device name → VID:PID fallback.
+        DeviceName = mc.Hid?.ProductName
+                     ?? mc.KnownDeviceName
+                     ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : "Controller");
 
-        ConnectionLabel = slot.ConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless";
+        // Connection label: prefer HID-detected type; fall back to XInput's guess.
+        ConnectionLabel = mc.HidConnectionType switch
+        {
+            HidConnectionType.Bluetooth => "BT",
+            HidConnectionType.Usb       => "USB",
+            _                           => mc.XInputConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless",
+        };
 
-        BatteryText = slot.BatteryPercent.HasValue
-            ? $"{slot.BatteryPercent}%"
-            : string.Empty;
+        VendorBrand = mc.VendorBrand ?? string.Empty;
+        VidPid      = mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : string.Empty;
+
+        BatteryText = mc.BatteryPercent.HasValue ? $"{mc.BatteryPercent}%" : string.Empty;
     }
 }

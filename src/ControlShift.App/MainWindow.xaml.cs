@@ -15,30 +15,31 @@ namespace ControlShift.App;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    private readonly MainViewModel _viewModel;
+    private readonly MainViewModel   _viewModel;
     private readonly DispatcherTimer _pollTimer;
-    private readonly SlotCard[] _cards = new SlotCard[4];
+    private readonly SlotCard[]      _cards = new SlotCard[4];
 
     public MainWindow()
     {
         InitializeComponent();
 
-        string dbPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
+        string dbPath      = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
+        string vendorsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-vendors.json");
 
-        // DECISION: Fingerprinter falls back to an empty device list if known-devices.json
-        // is missing (e.g. first run from a non-published build directory). Controllers still
-        // enumerate correctly; only the INTEGRATED badge is suppressed.
+        // DECISION: Both databases fall back to empty lists if their JSON files are missing
+        // (e.g. first run from a non-published build directory). Enumeration still works;
+        // only the INTEGRATED badge and brand labels are suppressed.
         IDeviceFingerprinter fingerprinter;
-        try
-        {
-            fingerprinter = DeviceFingerprinter.FromFile(dbPath);
-        }
-        catch
-        {
-            fingerprinter = new DeviceFingerprinter(Array.Empty<KnownDeviceEntry>());
-        }
+        IVendorDatabase      vendorDb;
 
-        _viewModel = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), fingerprinter);
+        try   { fingerprinter = DeviceFingerprinter.FromFile(dbPath); }
+        catch { fingerprinter = new DeviceFingerprinter(Array.Empty<KnownDeviceEntry>()); }
+
+        try   { vendorDb = VendorDatabase.FromFile(vendorsPath); }
+        catch { vendorDb = new VendorDatabase(Array.Empty<KnownVendorEntry>()); }
+
+        var matcher    = new ControllerMatcher(vendorDb, fingerprinter);
+        _viewModel     = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher);
 
         SetWindowSize(480, 600);
 

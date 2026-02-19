@@ -9,12 +9,14 @@ using ControlShift.App.ViewModels;
 namespace ControlShift.App.Controls;
 
 /// <summary>
-/// A card representing one XInput player slot. Tap to identify the controller via rumble.
+/// A card representing one XInput player slot.
+/// Shows controller name, brand badge, VID:PID, connection type, and battery.
+/// Tap to identify the controller via a 200ms rumble pulse.
 /// </summary>
 public sealed partial class SlotCard : UserControl
 {
     private SlotViewModel? _slot;
-    private bool _isRumbling;
+    private bool           _isRumbling;
 
     public SlotCard()
     {
@@ -38,22 +40,37 @@ public sealed partial class SlotCard : UserControl
         {
             DeviceName.Text    = "Empty";
             DeviceName.Opacity = 0.4;
-            ConnectionBadge.Visibility  = Visibility.Collapsed;
-            IntegratedBadge.Visibility  = Visibility.Collapsed;
-            BatterySection.Visibility   = Visibility.Collapsed;
+            ConnectionBadge.Visibility = Visibility.Collapsed;
+            IntegratedBadge.Visibility = Visibility.Collapsed;
+            BrandBadge.Visibility      = Visibility.Collapsed;
+            VidPidText.Visibility      = Visibility.Collapsed;
+            BatterySection.Visibility  = Visibility.Collapsed;
             return;
         }
 
         DeviceName.Text    = _slot.DeviceName;
         DeviceName.Opacity = 1.0;
 
+        // Connection type badge.
         ConnectionBadge.Visibility = string.IsNullOrEmpty(_slot.ConnectionLabel)
             ? Visibility.Collapsed : Visibility.Visible;
         ConnectionText.Text = _slot.ConnectionLabel;
 
+        // INTEGRATED badge.
         IntegratedBadge.Visibility = _slot.IsIntegrated
             ? Visibility.Visible : Visibility.Collapsed;
 
+        // Brand badge.
+        BrandBadge.Visibility = string.IsNullOrEmpty(_slot.VendorBrand)
+            ? Visibility.Collapsed : Visibility.Visible;
+        BrandText.Text = _slot.VendorBrand;
+
+        // VID:PID.
+        VidPidText.Visibility = string.IsNullOrEmpty(_slot.VidPid)
+            ? Visibility.Collapsed : Visibility.Visible;
+        VidPidText.Text = _slot.VidPid;
+
+        // Battery.
         if (string.IsNullOrEmpty(_slot.BatteryText))
         {
             BatterySection.Visibility = Visibility.Collapsed;
@@ -61,15 +78,14 @@ public sealed partial class SlotCard : UserControl
         else
         {
             BatterySection.Visibility = Visibility.Visible;
-            // Percentage values get a battery icon; otherwise show a plug for wired.
-            BatteryIcon.Text = _slot.BatteryText.EndsWith('%') ? "\uEBA7" : "\uE83E";
+            BatteryIcon.Text = _slot.BatteryGlyph;
             BatteryText.Text = _slot.BatteryText;
         }
     }
 
     /// <summary>
-    /// Tap handler — sends a 500ms full-strength rumble to identify this controller.
-    /// Only fires for connected XInput controllers. HID-only devices silently skip.
+    /// Tap handler — 200ms rumble at 25% strength to identify this controller.
+    /// Only fires for connected XInput controllers; HID-only devices silently skip.
     /// </summary>
     private async void SlotCard_Tapped(object sender, TappedRoutedEventArgs e)
     {
@@ -78,14 +94,13 @@ public sealed partial class SlotCard : UserControl
         _isRumbling = true;
         try
         {
-            // Full-strength rumble: 65535 = max (ushort) for both motors.
-            XInput.SetVibration((uint)_slot.SlotIndex, 65535, 65535);
+            // 16383 ≈ 25% of ushort.MaxValue (65535) — enough to feel without startling.
+            XInput.SetVibration((uint)_slot.SlotIndex, 16383, 16383);
 
-            // Highlight card border green while rumbling.
             CardBorder.BorderBrush     = new SolidColorBrush(Color.FromArgb(255, 16, 124, 16));
             CardBorder.BorderThickness = new Thickness(2);
 
-            await Task.Delay(500);
+            await Task.Delay(200);
 
             XInput.SetVibration((uint)_slot.SlotIndex, 0, 0);
 
