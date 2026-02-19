@@ -1,100 +1,81 @@
+using System.Runtime.InteropServices;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
-using Microsoft.Extensions.DependencyInjection;
-using ControlShift.App.ViewModels;
+using Windows.Graphics;
 using ControlShift.App.Controls;
-using ControlShift.App.Services;
-using Serilog;
+using ControlShift.App.ViewModels;
+using ControlShift.Core.Devices;
+using ControlShift.Core.Enumeration;
 
 namespace ControlShift.App;
 
 /// <summary>
-/// Main tray popup window — 320x480px dark-themed controller slot display.
+/// Standalone Xbox-aesthetic window — ~480×600 logical pixels, non-resizable.
+/// Shows 4 controller slot cards. Click any card to rumble that controller.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    private static readonly ILogger Logger = Log.ForContext<MainWindow>();
-
-    public MainViewModel ViewModel { get; }
-    private TrayIconService? _trayIconService;
+    private readonly MainViewModel _viewModel;
+    private readonly DispatcherTimer _pollTimer;
+    private readonly SlotCard[] _cards = new SlotCard[4];
 
     public MainWindow()
     {
-        this.InitializeComponent();
+        InitializeComponent();
 
-        ViewModel = App.Services.GetRequiredService<MainViewModel>();
+        string dbPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
 
-        // Set window size to match PRD spec: 320x480
-        SetWindowSize(320, 480);
-
-        // Initialize tray icon
-        InitializeTrayIcon();
-
-        // Build the slot cards in the UI
-        BuildSlotCards();
-
-        // Dispose tray icon on window close to prevent ghost icons
-        this.Closed += OnClosed;
-
-        // Initial enumeration (fire-and-forget; errors logged inside)
-        _ = InitialRefreshAsync();
-    }
-
-    private async Task InitialRefreshAsync()
-    {
-        await ViewModel.RefreshControllersAsync();
-        UpdateSlotCards();
-    }
-
-    private void OnClosed(object sender, WindowEventArgs args)
-    {
-        _trayIconService?.Dispose();
-    }
-
-    private void SetWindowSize(int width, int height)
-    {
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
-        var appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
-        appWindow.Resize(new Windows.Graphics.SizeInt32(width, height));
-    }
-
-    private void InitializeTrayIcon()
-    {
+        // DECISION: Fingerprinter falls back to an empty device list if known-devices.json
+        // is missing (e.g. first run from a non-published build directory). Controllers still
+        // enumerate correctly; only the INTEGRATED badge is suppressed.
+        IDeviceFingerprinter fingerprinter;
         try
         {
-            var factory = App.Services.GetRequiredService<Func<Window, TrayIconService>>();
-            _trayIconService = factory(this);
-            _trayIconService.Initialize();
+            fingerprinter = DeviceFingerprinter.FromFile(dbPath);
         }
-        catch (Exception ex)
+        catch
         {
-            Logger.Warning(ex, "Failed to initialize tray icon — running without tray support");
+            fingerprinter = new DeviceFingerprinter(Array.Empty<KnownDeviceEntry>());
         }
+
+        _viewModel = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), fingerprinter);
+
+        SetWindowSize(480, 600);
+
+        // Build 4 fixed slot cards — one per XInput slot P1–P4.
+        for (int i = 0; i < 4; i++)
+        {
+            _cards[i] = new SlotCard();
+            SlotPanel.Children.Add(_cards[i]);
+        }
+
+        // Poll for device changes every 5 seconds.
+        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _pollTimer.Tick += async (_, _) => await RefreshAsync();
+        _pollTimer.Start();
+
+        Closed += (_, _) => _pollTimer.Stop();
+
+        // Initial scan on window open.
+        _ = RefreshAsync();
     }
 
-    private void BuildSlotCards()
+    private async Task RefreshAsync()
     {
-        SlotPanel.Children.Clear();
-
-        foreach (var slot in ViewModel.Slots)
-        {
-            var card = new SlotCard();
-            card.SetSlot(slot);
-            SlotPanel.Children.Add(card);
-        }
+        StatusText.Text = "Scanning...";
+        await _viewModel.RefreshAsync();
+        UpdateCards();
     }
 
-    private void UpdateSlotCards()
+    private void UpdateCards()
     {
-        for (int i = 0; i < SlotPanel.Children.Count && i < ViewModel.Slots.Count; i++)
+        for (int i = 0; i < _cards.Length; i++)
         {
-            if (SlotPanel.Children[i] is SlotCard card)
-            {
-                card.SetSlot(ViewModel.Slots[i]);
-            }
+            if (i < _viewModel.Slots.Count)
+                _cards[i].SetSlot(_viewModel.Slots[i]);
         }
 
-        int connected = ViewModel.Slots.Count(s => s.IsConnected);
+        int connected = _viewModel.Slots.Count(s => s.IsConnected);
         StatusText.Text = connected > 0
             ? $"{connected} controller{(connected != 1 ? "s" : "")} connected"
             : "No controllers detected";
@@ -102,8 +83,27 @@ public sealed partial class MainWindow : Window
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        await ViewModel.RefreshControllersAsync();
-        UpdateSlotCards();
-        Logger.Information("Manual controller refresh triggered");
+        await RefreshAsync();
     }
+
+    /// <summary>
+    /// Resizes the window to the given logical pixel dimensions, scaled for the
+    /// current display DPI. AppWindow.Resize takes physical pixels.
+    /// </summary>
+    private void SetWindowSize(int logicalWidth, int logicalHeight)
+    {
+        var hwnd  = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var dpi   = GetDpiForWindow(hwnd);
+        var scale = dpi / 96.0;
+
+        var appWindow = AppWindow.GetFromWindowId(
+            Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
+
+        appWindow.Resize(new SizeInt32(
+            (int)(logicalWidth  * scale),
+            (int)(logicalHeight * scale)));
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

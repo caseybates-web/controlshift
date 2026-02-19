@@ -14,16 +14,7 @@
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
-    <!-- Unpackaged + self-contained Windows App SDK.
-         WindowsPackageType=None: disables MSIX packaging (and its architecture
-           check) while keeping the MRT/PRI build tooling the XAML compiler needs.
-         WindowsAppSDKSelfContained=true: copies all Windows App SDK runtime DLLs
-           flat next to the exe. The bootstrapper loads them from the app directory
-           instead of locating an installed MSIX framework package. This means the
-           app has zero runtime pre-installation requirements.
-         The Bootstrap.Initialize() P/Invoke call is NOT used in self-contained mode —
-           DLL loading is handled transparently before managed code starts.
-         Package.appxmanifest is retained for future MSIX packaging (Phase 3). -->
+    <!-- Unpackaged + self-contained Windows App SDK. -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!-- Suppress the XAML-generated Main so Program.cs is the sole entry point. -->
@@ -36,13 +27,8 @@
     <!-- DECISION: Microsoft.WindowsAppSDK 1.6.250205007 not on NuGet; nearest is 1.6.250228001. Using latest available. -->
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" IncludeAssets="build" />
-    <!-- DECISION: CommunityToolkit.WinUI meta-package does not exist on NuGet; the toolkit is split into granular packages.
-         Using CommunityToolkit.WinUI.Extensions (covers NotifyIcon / tray helpers) as the primary reference.
-         Add more sub-packages (Controls, Animations, etc.) as needed in later phases. -->
-    <PackageReference Include="CommunityToolkit.WinUI.Extensions" Version="8.2.251219" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Serilog" Version="4.2.0" />
-    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <!-- Vortice.XInput is used in App for XInput.SetState (rumble on card click). -->
+    <PackageReference Include="Vortice.XInput" Version="3.8.2" />
   </ItemGroup>
 
   <ItemGroup>

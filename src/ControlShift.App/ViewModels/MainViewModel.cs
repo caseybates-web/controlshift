@@ -1,70 +1,77 @@
 using System.Collections.ObjectModel;
-using ControlShift.Core.Enumeration;
 using ControlShift.Core.Devices;
-using ControlShift.Core.Models;
-using Serilog;
+using ControlShift.Core.Enumeration;
 
 namespace ControlShift.App.ViewModels;
 
 /// <summary>
-/// Main view model for the tray popup window.
-/// Manages the 4 controller slot view models and drives enumeration.
+/// Main view model — owns the 4 controller slot VMs and drives enumeration.
 /// </summary>
-public class MainViewModel
+public sealed class MainViewModel
 {
-    private static readonly ILogger Logger = Log.ForContext<MainViewModel>();
-    private readonly IXInputEnumerator _xinputEnumerator;
-    private readonly IHidEnumerator _hidEnumerator;
+    private readonly IXInputEnumerator    _xinput;
+    private readonly IHidEnumerator       _hid;
     private readonly IDeviceFingerprinter _fingerprinter;
 
     public ObservableCollection<SlotViewModel> Slots { get; } = new();
 
     public MainViewModel(
-        IXInputEnumerator xinputEnumerator,
-        IHidEnumerator hidEnumerator,
+        IXInputEnumerator    xinput,
+        IHidEnumerator       hid,
         IDeviceFingerprinter fingerprinter)
     {
-        _xinputEnumerator = xinputEnumerator;
-        _hidEnumerator = hidEnumerator;
+        _xinput        = xinput;
+        _hid           = hid;
         _fingerprinter = fingerprinter;
-
-        // Initialize 4 empty slots (P1–P4)
-        for (int i = 0; i < 4; i++)
-        {
-            Slots.Add(new SlotViewModel { SlotIndex = i });
-        }
     }
 
     /// <summary>
-    /// Re-enumerate all controllers and update slot view models.
-    /// Called on window open, manual refresh, and WM_DEVICECHANGE.
-    /// Runs enumeration off the UI thread to avoid blocking.
+    /// Re-enumerates all controllers and refreshes <see cref="Slots"/>.
+    /// Safe to call from the UI thread — enumeration runs on a background thread.
     /// </summary>
-    public async Task RefreshControllersAsync()
+    public async Task RefreshAsync()
     {
-        try
+        var (xinputSlots, fingerprintedDevices) = await Task.Run(() =>
         {
-            var (xinputSlots, hidDevices) = await Task.Run(() =>
-            {
-                var x = _xinputEnumerator.EnumerateSlots();
-                var h = _hidEnumerator.EnumerateGameControllers();
-                return (x, h);
-            });
+            var x = _xinput.GetSlots();
+            var h = _hid.GetDevices();
+            var f = _fingerprinter.Fingerprint(h);
+            return (x, f);
+        });
 
-            var controllers = _fingerprinter.IdentifyControllers(xinputSlots, hidDevices);
+        // First fingerprinted HID device that matches a known integrated gamepad.
+        var integratedHid = fingerprintedDevices.FirstOrDefault(f => f.IsIntegratedGamepad);
 
-            for (int i = 0; i < 4 && i < controllers.Count; i++)
+        // Build a VM for each of the 4 XInput slots.
+        // Heuristic: the first connected XInput slot is flagged as the integrated gamepad
+        // when we found a matching integrated HID device.
+        var vms = new List<SlotViewModel>(4);
+        bool integratedAssigned = false;
+
+        foreach (var slot in xinputSlots)
+        {
+            var vm = new SlotViewModel(slot.SlotIndex);
+
+            FingerprintedDevice? match = null;
+            if (integratedHid is not null && slot.IsConnected && !integratedAssigned)
             {
-                Slots[i].UpdateFrom(controllers[i]);
+                match = integratedHid;
+                integratedAssigned = true;
             }
 
-            int connected = controllers.Count(c => c.IsConnected);
-            Logger.Information("Refreshed controllers: {Connected} of {Total} slots active",
-                connected, controllers.Count);
+            vm.UpdateFrom(slot, match);
+            vms.Add(vm);
         }
-        catch (Exception ex)
-        {
-            Logger.Error(ex, "Failed to refresh controllers");
-        }
+
+        // Sort: integrated first → connected by slot index → disconnected.
+        var sorted = vms
+            .OrderByDescending(v => v.IsIntegrated)
+            .ThenByDescending(v => v.IsConnected)
+            .ThenBy(v => v.SlotIndex)
+            .ToList();
+
+        Slots.Clear();
+        foreach (var vm in sorted)
+            Slots.Add(vm);
     }
 }

@@ -1,13 +1,13 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using ControlShift.Core.Devices;
+using ControlShift.Core.Enumeration;
 using Microsoft.UI.Xaml;
 
 namespace ControlShift.App.ViewModels;
 
 /// <summary>
 /// View model for a single XInput player slot card (P1–P4).
-/// Implements INotifyPropertyChanged so x:Bind Mode=OneWay updates work in Step 6
-/// when live enumeration data is wired in.
 /// </summary>
 public sealed class SlotViewModel : INotifyPropertyChanged
 {
@@ -22,17 +22,18 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         }
     }
 
-    // ── Slot identity (fixed at construction) ─────────────────────────────────
+    // ── Slot identity ─────────────────────────────────────────────────────────
 
     public int    SlotIndex   { get; }
     public string PlayerLabel => $"P{SlotIndex + 1}";
 
-    // ── Live data (updated in Step 6) ─────────────────────────────────────────
+    // ── Live data ─────────────────────────────────────────────────────────────
 
     private bool   _isConnected;
-    private string _deviceName       = "—";
-    private string _connectionLabel  = string.Empty;
-    private string _batteryText      = string.Empty;
+    private bool   _isIntegrated;
+    private string _deviceName      = "—";
+    private string _connectionLabel = string.Empty;
+    private string _batteryText     = string.Empty;
 
     public bool IsConnected
     {
@@ -40,9 +41,18 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         set
         {
             Set(ref _isConnected, value);
-            // Derived visibility properties change whenever IsConnected changes.
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConnectionVisibility)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
+        }
+    }
+
+    public bool IsIntegrated
+    {
+        get => _isIntegrated;
+        set
+        {
+            Set(ref _isIntegrated, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IntegratedBadgeVisibility)));
         }
     }
 
@@ -68,20 +78,52 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         }
     }
 
-    // ── Derived visibility (consumed by x:Bind in XAML) ──────────────────────
+    // ── Derived visibility ────────────────────────────────────────────────────
 
-    /// <summary>Collapses the connection-type label when the slot is empty.</summary>
     public Visibility ConnectionVisibility =>
-        IsConnected ? Visibility.Visible : Visibility.Collapsed;
+        IsConnected && !string.IsNullOrEmpty(ConnectionLabel)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
-    /// <summary>Collapses the battery readout when the slot is empty or wired.</summary>
     public Visibility BatteryVisibility =>
         !string.IsNullOrEmpty(BatteryText) ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility IntegratedBadgeVisibility =>
+        IsIntegrated ? Visibility.Visible : Visibility.Collapsed;
 
     // ── Construction ──────────────────────────────────────────────────────────
 
     public SlotViewModel(int slotIndex)
     {
         SlotIndex = slotIndex;
+    }
+
+    // ── Update ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates all live data from a polled XInput slot and its fingerprinted HID match.
+    /// Pass null for <paramref name="integratedMatch"/> when no integrated device is detected.
+    /// </summary>
+    public void UpdateFrom(XInputSlotInfo slot, FingerprintedDevice? integratedMatch)
+    {
+        IsConnected  = slot.IsConnected;
+        IsIntegrated = integratedMatch?.IsIntegratedGamepad == true;
+
+        if (!slot.IsConnected)
+        {
+            DeviceName      = "—";
+            ConnectionLabel = string.Empty;
+            BatteryText     = string.Empty;
+            return;
+        }
+
+        DeviceName = integratedMatch?.KnownDeviceName
+                     ?? (IsIntegrated ? "Built-in Controller" : "Controller");
+
+        ConnectionLabel = slot.ConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless";
+
+        BatteryText = slot.BatteryPercent.HasValue
+            ? $"{slot.BatteryPercent}%"
+            : string.Empty;
     }
 }
