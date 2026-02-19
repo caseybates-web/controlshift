@@ -2,7 +2,7 @@
 
 A lightweight Windows app that lets users see all connected controllers, identify them via rumble, and reorder their XInput Player Index assignments on gaming handhelds. Solves the problem where the integrated gamepad permanently holds Player 1, preventing Bluetooth controllers from being recognized by games that only poll the first controller.
 
-**Status:** Phase 1 complete. Phase 2 Step 7 (rich controller identity) is next.
+**Status:** Phase 1 complete. Phase 2 Step 7 done. Step 8 (controller navigation) in progress.
 **Owner:** Hardware PdM managing e2e
 **License:** MIT (open source, public release)
 **Target:** Windows 10 (19041) minimum, Windows 11 supported
@@ -163,7 +163,7 @@ dotnet test
 
 ## Phase 2 — Controller Reordering
 
-### Step 7 — Rich Controller Identity (current)
+### Step 7 — Rich Controller Identity ✓ (complete)
 
 Surface rich identity on each card:
 - Name: HID product string, or known-devices.json name, or VID:PID fallback
@@ -176,7 +176,45 @@ Surface rich identity on each card:
 XInput ↔ HID matching: XInput slot N exposes an HID interface with `IG_0N` in its device path.
 Use this marker to link `XInputSlotInfo` to the right `HidDeviceInfo`.
 
-### Step 8 — ViGEm + HidHide Controller Reordering
+### Controller Nicknames (Phase 3 feature — implement after reordering is stable)
+
+Let users rename any controller card with a custom nickname (e.g. "Casey's Xbox Elite").
+
+- Double-click a card's name label to enter inline edit mode
+- TextBox replaces the TextBlock; Escape cancels, Enter/focus-loss saves
+- Nickname persisted to `%APPDATA%\ControlShift\nicknames.json` keyed by `VID:PID:SerialOrPath`
+- If serial is unavailable, fall back to the HID device path (good enough for a fixed handheld gamepad)
+- Nickname takes highest display priority: `nickname → HID product string → known-device name → VID:PID`
+
+### Step 8 — Controller Navigation (current)
+
+Allow the user to navigate cards and initiate reordering without a mouse.
+
+**Focus movement (normal mode):**
+- D-pad up/down or left thumbstick up/down moves focus between cards
+- Tab / Shift+Tab moves focus between cards (keyboard)
+- WinUI 3 `XYFocusUp` / `XYFocusDown` set on each card for built-in gamepad navigation
+
+**Reorder mode (one card selected):**
+- A button (or Enter/Space) selects the focused card for reordering
+- D-pad/thumbstick (or arrow keys) moves the selected card up/down in the list — live preview
+- A again (or Enter/Space) confirms the new position
+- B (or Escape) cancels and snaps the card back to its original position
+
+**Visual states:**
+- Focused: 1px `#107C10` border
+- Selected: 3px `#107C10` border + slightly brighter card background (`#373737`)
+- Dimmed: 0.4 opacity (all other cards while one is selected)
+- Normal: 1px `#404040` border, full opacity
+
+**Implementation notes:**
+- Poll XInput at 100ms for A/B + D-pad + thumbstick (covers A/B which WinUI 3 doesn't auto-route)
+- Handle `KeyDown` on root Grid: Enter/Space = A, Escape = B, arrow Up/Down = card move (reorder mode)
+- Gate XInput polling on window active state (`Activated`/`Deactivated` events)
+- After any card reorder, update `XYFocusUp`/`XYFocusDown` links to match new visual order
+- Tab order (`TabIndex`) must match visual top-to-bottom order; rebuild after reorder
+
+### Step 9 — ViGEm + HidHide Controller Reordering
 
 - `ViGEmController` wrapper in Core/Devices/
 - `HidHideService` wrapper in Core/Devices/
