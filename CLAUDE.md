@@ -63,6 +63,12 @@ The integrated gamepad is always displayed as the first card, regardless of Play
 
 ---
 
+## Code Quality — DRY Principle
+
+DRY is a core guideline. Apply pragmatically: extract shared logic into helpers when the same pattern appears in 2+ places. Use `// TODO: DRY` comments to flag duplication mid-task. Don't over-abstract single-use code. Don't DRY test setup — tests repeat intentionally. Run a cleanup pass at the end of each Phase before moving on.
+
+---
+
 ## GitHub-Native Development (Hard Requirement)
 
 All build, test, and release steps must run entirely inside GitHub Actions. No local Visual Studio or SDK required to produce a release. Casey must be able to go from code to a downloadable installer by pushing a git tag — nothing else.

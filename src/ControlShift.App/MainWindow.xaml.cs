@@ -43,11 +43,29 @@ public sealed partial class MainWindow : Window
     private short                    _prevLeftThumbY;
     private bool                     _windowActive = true;
 
+    // ── Diagnostic logging ────────────────────────────────────────────────────
+
+    // Timestamped log file in %TEMP% — written even in Release, survives a crash.
+    private static readonly string NavLogPath =
+        System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            $"ControlShift-nav-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+
+    private static void NavLog(string msg)
+    {
+        var line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
+        Debug.WriteLine(line);
+        try { System.IO.File.AppendAllText(NavLogPath, line + System.Environment.NewLine); }
+        catch { /* log writes must never throw */ }
+    }
+
     // ── Construction ──────────────────────────────────────────────────────────
 
     public MainWindow()
     {
         InitializeComponent();
+
+        NavLog($"MainWindow ctor — log: {NavLogPath}");
 
         string dbPath      = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
         string vendorsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-vendors.json");
@@ -108,6 +126,7 @@ public sealed partial class MainWindow : Window
     private void OnContentGridLoaded(object sender, RoutedEventArgs e)
     {
         ContentGrid.Loaded -= OnContentGridLoaded;
+        NavLog("OnContentGridLoaded — wiring XYFocus + TabIndex + focus events");
 
         UpdateXYFocusLinks();
         for (int i = 0; i < 4; i++)
@@ -196,34 +215,64 @@ public sealed partial class MainWindow : Window
             {
                 try
                 {
+                    NavLog($"[NavDispatch] reorderIdx={_reorderingIndex} focusedIdx={_focusedCardIndex} " +
+                           $"up={snapUp} down={snapDown} A={snapA} B={snapB}");
+
                     if (_reorderingIndex >= 0)
                     {
                         // Reorder mode: D-pad/stick moves the selected card; A confirms; B cancels.
-                        if (snapUp)   MoveReorderingCard(-1);
-                        if (snapDown) MoveReorderingCard(+1);
-                        if (snapA)    ConfirmReorder();
-                        if (snapB)    CancelReorder();
+                        if (snapUp)
+                        {
+                            NavLog("[NavDispatch] → MoveReorderingCard(-1)");
+                            MoveReorderingCard(-1);
+                        }
+                        if (snapDown)
+                        {
+                            NavLog("[NavDispatch] → MoveReorderingCard(+1)");
+                            MoveReorderingCard(+1);
+                        }
+                        if (snapA)
+                        {
+                            NavLog("[NavDispatch] → ConfirmReorder");
+                            ConfirmReorder();
+                        }
+                        if (snapB)
+                        {
+                            NavLog("[NavDispatch] → CancelReorder");
+                            CancelReorder();
+                        }
                     }
                     else
                     {
                         // Normal mode: D-pad/stick moves focus; A enters reorder mode.
-                        if (snapUp   && _focusedCardIndex > 0)
+                        if (snapUp && _focusedCardIndex > 0)
+                        {
+                            NavLog($"[NavDispatch] → Focus card {_focusedCardIndex - 1} (up)");
                             _cards[_focusedCardIndex - 1].Focus(FocusState.Programmatic);
+                        }
                         if (snapDown && _focusedCardIndex >= 0 && _focusedCardIndex < _cards.Length - 1)
+                        {
+                            NavLog($"[NavDispatch] → Focus card {_focusedCardIndex + 1} (down)");
                             _cards[_focusedCardIndex + 1].Focus(FocusState.Programmatic);
+                        }
                         if (snapA && _focusedCardIndex >= 0)
+                        {
+                            NavLog($"[NavDispatch] → StartReorder on card {_focusedCardIndex}");
                             StartReorder();
+                        }
                     }
+
+                    NavLog("[NavDispatch] done");
                 }
                 catch (Exception uiEx)
                 {
-                    Debug.WriteLine($"[NavTimer UI dispatch] {uiEx}");
+                    NavLog($"[NavDispatch ERROR] {uiEx}");
                 }
             });
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[NavTimer_Tick] {ex}");
+            NavLog($"[NavTimer_Tick ERROR] {ex}");
         }
     }
 
@@ -238,29 +287,32 @@ public sealed partial class MainWindow : Window
     {
         if (_reorderingIndex >= 0)
         {
-            // Reorder mode: intercept arrow keys so they move the card.
             switch (e.Key)
             {
                 case VirtualKey.Up:
                 case VirtualKey.GamepadDPadUp:
                 case VirtualKey.GamepadLeftThumbstickUp:
+                    NavLog("[KeyDown] MoveReorderingCard(-1)");
                     MoveReorderingCard(-1);
                     e.Handled = true;
                     break;
                 case VirtualKey.Down:
                 case VirtualKey.GamepadDPadDown:
                 case VirtualKey.GamepadLeftThumbstickDown:
+                    NavLog("[KeyDown] MoveReorderingCard(+1)");
                     MoveReorderingCard(+1);
                     e.Handled = true;
                     break;
                 case VirtualKey.Enter:
                 case VirtualKey.Space:
                 case VirtualKey.GamepadA:
+                    NavLog("[KeyDown] ConfirmReorder");
                     ConfirmReorder();
                     e.Handled = true;
                     break;
                 case VirtualKey.Escape:
                 case VirtualKey.GamepadB:
+                    NavLog("[KeyDown] CancelReorder");
                     CancelReorder();
                     e.Handled = true;
                     break;
@@ -275,6 +327,7 @@ public sealed partial class MainWindow : Window
                 case VirtualKey.GamepadA:
                     if (_focusedCardIndex >= 0)
                     {
+                        NavLog($"[KeyDown] StartReorder on card {_focusedCardIndex}");
                         StartReorder();
                         e.Handled = true;
                     }
@@ -305,6 +358,7 @@ public sealed partial class MainWindow : Window
     private void StartReorder()
     {
         if (_focusedCardIndex < 0) return;
+        NavLog($"[StartReorder] card {_focusedCardIndex}");
         _reorderingIndex = _focusedCardIndex;
         Array.Copy(_cards, _savedOrder, _cards.Length);
         UpdateCardStates();
@@ -313,6 +367,7 @@ public sealed partial class MainWindow : Window
     private void ConfirmReorder()
     {
         if (_reorderingIndex < 0) return;
+        NavLog($"[ConfirmReorder] card now at idx {_reorderingIndex}");
         _focusedCardIndex = _reorderingIndex;
         _reorderingIndex  = -1;
         UpdateCardStates();
@@ -321,13 +376,20 @@ public sealed partial class MainWindow : Window
     private void CancelReorder()
     {
         if (_reorderingIndex < 0) return;
+        NavLog($"[CancelReorder] restoring from reorderIdx={_reorderingIndex}");
 
-        // Restore the original visual order from the saved snapshot.
+        // Clear XYFocus links before removing any element from the visual tree.
+        // WinUI's focus engine follows XYFocusUp/Down when an element loses focus
+        // on removal; if the link target is itself being removed, WinUI throws a
+        // native assertion (STATUS_ASSERTION_FAILURE).
+        ClearXYFocusLinks();
+
         SlotPanel.Children.Clear();
         Array.Copy(_savedOrder, _cards, _cards.Length);
         foreach (var card in _cards)
             SlotPanel.Children.Add(card);
 
+        // All cards are back in the tree — safe to restore XYFocus links now.
         UpdateXYFocusLinks();
 
         _focusedCardIndex = _reorderingIndex;
@@ -335,6 +397,7 @@ public sealed partial class MainWindow : Window
 
         UpdateCardStates();
         _cards[_focusedCardIndex].Focus(FocusState.Programmatic);
+        NavLog("[CancelReorder] done");
     }
 
     private void MoveReorderingCard(int direction)
@@ -343,21 +406,27 @@ public sealed partial class MainWindow : Window
         int newIdx = _reorderingIndex + direction;
         if (newIdx < 0 || newIdx >= _cards.Length) return;
 
-        // Swap in panel.
+        NavLog($"[MoveReorderingCard] {_reorderingIndex} → {newIdx}");
+
+        // Clear XYFocus links before touching the children collection.
+        // WinUI asserts if its focus engine follows an XYFocus link to an element
+        // that is currently being removed from or not yet re-inserted into the tree.
+        ClearXYFocusLinks();
+
         var movingCard = _cards[_reorderingIndex];
         SlotPanel.Children.RemoveAt(_reorderingIndex);
         SlotPanel.Children.Insert(newIdx, movingCard);
 
-        // Swap in array.
         (_cards[_reorderingIndex], _cards[newIdx]) = (_cards[newIdx], _cards[_reorderingIndex]);
 
-        // Rebuild TabIndex and XYFocus to match new visual order.
+        // All cards are back in the tree — rebuild TabIndex and XYFocus.
         for (int i = 0; i < _cards.Length; i++)
             _cards[i].TabIndex = i;
         UpdateXYFocusLinks();
 
         _reorderingIndex = newIdx;
         UpdateCardStates();
+        NavLog($"[MoveReorderingCard] done, reorderIdx now {_reorderingIndex}");
     }
 
     // ── Navigation: visual state ──────────────────────────────────────────────
@@ -376,12 +445,37 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void UpdateXYFocusLinks()
+    /// <summary>
+    /// Nulls out all XYFocusUp/Down links on every card.
+    /// Must be called before any SlotPanel.Children modification (RemoveAt, Clear)
+    /// to prevent WinUI's focus engine from following stale links to detached elements.
+    /// </summary>
+    private void ClearXYFocusLinks()
     {
         for (int i = 0; i < _cards.Length; i++)
         {
-            _cards[i].XYFocusUp   = i > 0                ? _cards[i - 1] : null;
-            _cards[i].XYFocusDown = i < _cards.Length - 1 ? _cards[i + 1] : null;
+            _cards[i].XYFocusUp   = null;
+            _cards[i].XYFocusDown = null;
+        }
+    }
+
+    /// <summary>
+    /// Sets XYFocusUp/Down so WinUI's built-in D-pad focus navigation chains through
+    /// the cards top-to-bottom. Only call after all cards are in the visual tree.
+    /// </summary>
+    private void UpdateXYFocusLinks()
+    {
+        try
+        {
+            for (int i = 0; i < _cards.Length; i++)
+            {
+                _cards[i].XYFocusUp   = i > 0                ? _cards[i - 1] : null;
+                _cards[i].XYFocusDown = i < _cards.Length - 1 ? _cards[i + 1] : null;
+            }
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[UpdateXYFocusLinks ERROR] {ex}");
         }
     }
 
