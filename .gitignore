@@ -416,3 +416,9 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Claude Code local settings (user-specific)
+.claude/
+
+# Development HTML mockup/preview files
+ui-*.html
