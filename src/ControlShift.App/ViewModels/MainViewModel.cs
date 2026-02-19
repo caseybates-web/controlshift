@@ -9,20 +9,20 @@ namespace ControlShift.App.ViewModels;
 /// </summary>
 public sealed class MainViewModel
 {
-    private readonly IXInputEnumerator _xinput;
-    private readonly IHidEnumerator    _hid;
-    private readonly IControllerMatcher _matcher;
+    private readonly IXInputEnumerator    _xinput;
+    private readonly IHidEnumerator       _hid;
+    private readonly IDeviceFingerprinter _fingerprinter;
 
     public ObservableCollection<SlotViewModel> Slots { get; } = new();
 
     public MainViewModel(
-        IXInputEnumerator  xinput,
-        IHidEnumerator     hid,
-        IControllerMatcher matcher)
+        IXInputEnumerator    xinput,
+        IHidEnumerator       hid,
+        IDeviceFingerprinter fingerprinter)
     {
-        _xinput  = xinput;
-        _hid     = hid;
-        _matcher = matcher;
+        _xinput        = xinput;
+        _hid           = hid;
+        _fingerprinter = fingerprinter;
     }
 
     /// <summary>
@@ -31,17 +31,37 @@ public sealed class MainViewModel
     /// </summary>
     public async Task RefreshAsync()
     {
-        var (xinputSlots, hidDevices) = await Task.Run(() =>
-            (_xinput.GetSlots(), _hid.GetDevices()));
-
-        var matched = _matcher.Match(xinputSlots, hidDevices);
-
-        var vms = matched.Select(mc =>
+        var (xinputSlots, fingerprintedDevices) = await Task.Run(() =>
         {
-            var vm = new SlotViewModel(mc.SlotIndex);
-            vm.UpdateFrom(mc);
-            return vm;
+            var x = _xinput.GetSlots();
+            var h = _hid.GetDevices();
+            var f = _fingerprinter.Fingerprint(h);
+            return (x, f);
         });
+
+        // First fingerprinted HID device that matches a known integrated gamepad.
+        var integratedHid = fingerprintedDevices.FirstOrDefault(f => f.IsIntegratedGamepad);
+
+        // Build a VM for each of the 4 XInput slots.
+        // Heuristic: the first connected XInput slot is flagged as the integrated gamepad
+        // when we found a matching integrated HID device.
+        var vms = new List<SlotViewModel>(4);
+        bool integratedAssigned = false;
+
+        foreach (var slot in xinputSlots)
+        {
+            var vm = new SlotViewModel(slot.SlotIndex);
+
+            FingerprintedDevice? match = null;
+            if (integratedHid is not null && slot.IsConnected && !integratedAssigned)
+            {
+                match = integratedHid;
+                integratedAssigned = true;
+            }
+
+            vm.UpdateFrom(slot, match);
+            vms.Add(vm);
+        }
 
         // Sort: integrated first → connected by slot index → disconnected.
         var sorted = vms

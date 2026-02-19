@@ -4,9 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="ControlShift">
 
-    <Grid x:Name="ContentGrid"
-          Background="{StaticResource XbBackgroundBrush}"
-          KeyDown="ContentGrid_KeyDown">
+    <Grid Background="{StaticResource XbBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -19,7 +17,7 @@
                 <TextBlock Text="ControlShift"
                            FontFamily="Segoe UI" FontSize="20" FontWeight="Bold"
                            Foreground="{StaticResource XbTextBrush}" />
-                <TextBlock Text="v0.2"
+                <TextBlock Text="v0.1"
                            FontFamily="Segoe UI" FontSize="11" Margin="8,7,0,0"
                            Foreground="{StaticResource XbTextMutedBrush}" />
             </StackPanel>

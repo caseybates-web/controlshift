@@ -8,7 +8,6 @@ namespace ControlShift.App.ViewModels;
 
 /// <summary>
 /// View model for a single XInput player slot card (P1–P4).
-/// Updated by <see cref="UpdateFrom(MatchedController)"/> after each enumeration poll.
 /// </summary>
 public sealed class SlotViewModel : INotifyPropertyChanged
 {
@@ -30,13 +29,11 @@ public sealed class SlotViewModel : INotifyPropertyChanged
 
     // ── Live data ─────────────────────────────────────────────────────────────
 
-    private bool    _isConnected;
-    private bool    _isIntegrated;
-    private string  _deviceName      = "—";
-    private string  _connectionLabel = string.Empty;
-    private string  _batteryText     = string.Empty;
-    private string? _vendorBrand;
-    private string  _vidPid          = string.Empty;
+    private bool   _isConnected;
+    private bool   _isIntegrated;
+    private string _deviceName      = "—";
+    private string _connectionLabel = string.Empty;
+    private string _batteryText     = string.Empty;
 
     public bool IsConnected
     {
@@ -46,7 +43,6 @@ public sealed class SlotViewModel : INotifyPropertyChanged
             Set(ref _isConnected, value);
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConnectionVisibility)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VidPidVisibility)));
         }
     }
 
@@ -79,63 +75,21 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         {
             Set(ref _batteryText, value);
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryGlyph)));
         }
     }
-
-    public string? VendorBrand
-    {
-        get => _vendorBrand;
-        set
-        {
-            Set(ref _vendorBrand, value);
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BrandBadgeVisibility)));
-        }
-    }
-
-    public string VidPid
-    {
-        get => _vidPid;
-        set
-        {
-            Set(ref _vidPid, value);
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VidPidVisibility)));
-        }
-    }
-
-    // ── Derived display ─────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Maps BatteryText (a percentage string like "85%") to a Segoe Fluent Icons glyph.
-    /// </summary>
-    public string BatteryGlyph => BatteryText switch
-    {
-        "" => "",
-        var t when t.EndsWith('%') && int.TryParse(t.TrimEnd('%'), out var pct) =>
-            pct >= 75 ? "\xEBAA" :   // BatteryFull
-            pct >= 40 ? "\xEBA6" :   // BatteryHalf
-            pct >= 10 ? "\xEBA2" :   // BatteryLow
-                        "\xEBA0",    // BatteryEmpty
-        _ => "\xEBD4"               // PlugConnected (no percentage = wired)
-    };
 
     // ── Derived visibility ────────────────────────────────────────────────────
 
     public Visibility ConnectionVisibility =>
         IsConnected && !string.IsNullOrEmpty(ConnectionLabel)
-            ? Visibility.Visible : Visibility.Collapsed;
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
     public Visibility BatteryVisibility =>
         !string.IsNullOrEmpty(BatteryText) ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility IntegratedBadgeVisibility =>
         IsIntegrated ? Visibility.Visible : Visibility.Collapsed;
-
-    public Visibility BrandBadgeVisibility =>
-        !string.IsNullOrEmpty(VendorBrand) ? Visibility.Visible : Visibility.Collapsed;
-
-    public Visibility VidPidVisibility =>
-        IsConnected && !string.IsNullOrEmpty(VidPid) ? Visibility.Visible : Visibility.Collapsed;
 
     // ── Construction ──────────────────────────────────────────────────────────
 
@@ -147,40 +101,29 @@ public sealed class SlotViewModel : INotifyPropertyChanged
     // ── Update ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Updates all live data from the matched controller result for this slot.
+    /// Updates all live data from a polled XInput slot and its fingerprinted HID match.
+    /// Pass null for <paramref name="integratedMatch"/> when no integrated device is detected.
     /// </summary>
-    public void UpdateFrom(MatchedController mc)
+    public void UpdateFrom(XInputSlotInfo slot, FingerprintedDevice? integratedMatch)
     {
-        IsConnected  = mc.IsConnected;
-        IsIntegrated = mc.IsIntegratedGamepad;
+        IsConnected  = slot.IsConnected;
+        IsIntegrated = integratedMatch?.IsIntegratedGamepad == true;
 
-        if (!mc.IsConnected)
+        if (!slot.IsConnected)
         {
             DeviceName      = "—";
             ConnectionLabel = string.Empty;
             BatteryText     = string.Empty;
-            VendorBrand     = null;
-            VidPid          = string.Empty;
             return;
         }
 
-        // Name priority: HID product string → known device name → VID:PID fallback.
-        DeviceName = mc.Hid?.ProductName?.Trim() is { Length: > 0 } name
-            ? name
-            : mc.KnownDeviceName
-              ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : "Controller");
+        DeviceName = integratedMatch?.KnownDeviceName
+                     ?? (IsIntegrated ? "Built-in Controller" : "Controller");
 
-        // Connection label prefers the more specific HID detection over XInput's wired/wireless.
-        ConnectionLabel = mc.HidConnectionType switch
-        {
-            HidConnectionType.Bluetooth => "Bluetooth",
-            HidConnectionType.Usb       => "USB",
-            _                           => mc.XInputConnectionType == XInputConnectionType.Wireless
-                                               ? "Wireless" : "USB",
-        };
+        ConnectionLabel = slot.ConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless";
 
-        BatteryText = mc.BatteryPercent.HasValue ? $"{mc.BatteryPercent}%" : string.Empty;
-        VendorBrand = mc.VendorBrand;
-        VidPid      = mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : string.Empty;
+        BatteryText = slot.BatteryPercent.HasValue
+            ? $"{slot.BatteryPercent}%"
+            : string.Empty;
     }
 }
