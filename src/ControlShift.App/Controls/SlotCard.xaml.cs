@@ -8,20 +8,59 @@ using ControlShift.App.ViewModels;
 
 namespace ControlShift.App.Controls;
 
+/// <summary>Visual focus/selection states for a controller card.</summary>
+public enum CardState
+{
+    /// <summary>No focus — default appearance.</summary>
+    Normal,
+    /// <summary>Keyboard/gamepad focus — 1px Xbox-green border.</summary>
+    Focused,
+    /// <summary>Selected for reordering — 3px Xbox-green border + brighter background.</summary>
+    Selected,
+    /// <summary>Another card is being reordered — dimmed to 40% opacity.</summary>
+    Dimmed,
+}
+
 /// <summary>
 /// A card representing one XInput player slot.
 /// Shows controller name, brand badge, VID:PID, connection type, and battery.
-/// Tap to identify the controller via a 200ms rumble pulse.
+/// Tap to identify via a 200ms rumble pulse.
+/// Tab/XYFocus navigable; call <see cref="SetCardState"/> from MainWindow to update visuals.
 /// </summary>
 public sealed partial class SlotCard : UserControl
 {
+    // ── Card state colors ─────────────────────────────────────────────────────
+
+    private static readonly Color ColorBorderNormal  = Color.FromArgb(255,  64,  64,  64); // #404040
+    private static readonly Color ColorBorderFocused = Color.FromArgb(255,  16, 124,  16); // #107C10
+    private static readonly Color ColorBgNormal      = Color.FromArgb(255,  45,  45,  45); // #2D2D2D
+    private static readonly Color ColorBgSelected    = Color.FromArgb(255,  55,  55,  55); // #373737
+
+    // ── Fields ────────────────────────────────────────────────────────────────
+
     private SlotViewModel? _slot;
     private bool           _isRumbling;
+    private CardState      _currentState = CardState.Normal;
+
+    // ── Construction ──────────────────────────────────────────────────────────
 
     public SlotCard()
     {
         this.InitializeComponent();
+        // IsTabStop and UseSystemFocusVisuals must be set after the element is in
+        // the visual tree. Setting them during construction triggers STATUS_ASSERTION_FAILURE
+        // (0xc000027b) in WinUI 3. Loaded fires after the element is attached.
+        this.Loaded += OnLoaded;
     }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        this.Loaded -= OnLoaded;
+        this.IsTabStop             = true;
+        this.UseSystemFocusVisuals = false;
+    }
+
+    // ── Slot data ─────────────────────────────────────────────────────────────
 
     /// <summary>Update the card to display the given slot view model.</summary>
     public void SetSlot(SlotViewModel slot)
@@ -51,26 +90,21 @@ public sealed partial class SlotCard : UserControl
         DeviceName.Text    = _slot.DeviceName;
         DeviceName.Opacity = 1.0;
 
-        // Connection type badge.
         ConnectionBadge.Visibility = string.IsNullOrEmpty(_slot.ConnectionLabel)
             ? Visibility.Collapsed : Visibility.Visible;
         ConnectionText.Text = _slot.ConnectionLabel;
 
-        // INTEGRATED badge.
         IntegratedBadge.Visibility = _slot.IsIntegrated
             ? Visibility.Visible : Visibility.Collapsed;
 
-        // Brand badge.
         BrandBadge.Visibility = string.IsNullOrEmpty(_slot.VendorBrand)
             ? Visibility.Collapsed : Visibility.Visible;
         BrandText.Text = _slot.VendorBrand;
 
-        // VID:PID.
         VidPidText.Visibility = string.IsNullOrEmpty(_slot.VidPid)
             ? Visibility.Collapsed : Visibility.Visible;
         VidPidText.Text = _slot.VidPid;
 
-        // Battery.
         if (string.IsNullOrEmpty(_slot.BatteryText))
         {
             BatterySection.Visibility = Visibility.Collapsed;
@@ -82,6 +116,54 @@ public sealed partial class SlotCard : UserControl
             BatteryText.Text = _slot.BatteryText;
         }
     }
+
+    // ── Visual state ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Update the card's visual state (focus/selection/dimmed).
+    /// Called by MainWindow as navigation state changes.
+    /// </summary>
+    public void SetCardState(CardState state)
+    {
+        _currentState = state;
+        ApplyCardState();
+    }
+
+    private void ApplyCardState()
+    {
+        switch (_currentState)
+        {
+            case CardState.Normal:
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderNormal);
+                CardBorder.BorderThickness = new Thickness(1);
+                CardBorder.Background      = new SolidColorBrush(ColorBgNormal);
+                Opacity = 1.0;
+                break;
+
+            case CardState.Focused:
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderFocused);
+                CardBorder.BorderThickness = new Thickness(1);
+                CardBorder.Background      = new SolidColorBrush(ColorBgNormal);
+                Opacity = 1.0;
+                break;
+
+            case CardState.Selected:
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderFocused);
+                CardBorder.BorderThickness = new Thickness(3);
+                CardBorder.Background      = new SolidColorBrush(ColorBgSelected);
+                Opacity = 1.0;
+                break;
+
+            case CardState.Dimmed:
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderNormal);
+                CardBorder.BorderThickness = new Thickness(1);
+                CardBorder.Background      = new SolidColorBrush(ColorBgNormal);
+                Opacity = 0.4;
+                break;
+        }
+    }
+
+    // ── Rumble on tap ─────────────────────────────────────────────────────────
 
     /// <summary>
     /// Tap handler — 200ms rumble at 25% strength to identify this controller.
@@ -97,6 +179,7 @@ public sealed partial class SlotCard : UserControl
             // 16383 ≈ 25% of ushort.MaxValue (65535) — enough to feel without startling.
             XInput.SetVibration((uint)_slot.SlotIndex, 16383, 16383);
 
+            // Flash the border while rumbling; restore state when done.
             CardBorder.BorderBrush     = new SolidColorBrush(Color.FromArgb(255, 16, 124, 16));
             CardBorder.BorderThickness = new Thickness(2);
 
@@ -104,8 +187,8 @@ public sealed partial class SlotCard : UserControl
 
             XInput.SetVibration((uint)_slot.SlotIndex, 0, 0);
 
-            CardBorder.BorderBrush     = new SolidColorBrush(Color.FromArgb(255, 64, 64, 64));
-            CardBorder.BorderThickness = new Thickness(1);
+            // Restore to whatever nav state the card had before the tap.
+            ApplyCardState();
         }
         finally
         {
