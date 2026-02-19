@@ -226,6 +226,19 @@ public class ControllerMatcherTests
         Assert.Equal(HidConnectionType.Bluetooth, result[0].HidConnectionType);
     }
 
+    [Fact]
+    public void Match_XboxSeriesXBtGuidInPath_ReturnsBluetooth()
+    {
+        // Xbox Series X/S controllers use HOGP profile UUID {00001812-...}
+        // rather than the classic HID-over-BT UUID {00001124-...}
+        var matcher = MakeMatcher();
+        var hid = new HidDeviceInfo("045E", "0B13", null,
+            @"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}&IG_00&VID_045E");
+        var result = matcher.Match([ConnectedSlot(0)], [hid]);
+
+        Assert.Equal(HidConnectionType.Bluetooth, result[0].HidConnectionType);
+    }
+
     // ── fingerprinting integration ────────────────────────────────────────────
 
     [Fact]

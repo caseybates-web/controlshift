@@ -154,8 +154,13 @@ public sealed class ControllerMatcher : IControllerMatcher
         if (devicePath.IndexOf("BTHLEDevice", StringComparison.OrdinalIgnoreCase) >= 0)
             return HidConnectionType.Bluetooth;
 
-        // HID-over-GATT service UUID (HoGP — also seen for some BT classic devices)
+        // HID-over-GATT service UUID — older Xbox One / most BT HID controllers
         if (devicePath.IndexOf("{00001124-0000-1000-8000-00805f9b34fb}",
+                               StringComparison.OrdinalIgnoreCase) >= 0)
+            return HidConnectionType.Bluetooth;
+
+        // HID-over-GATT (HOGP) profile UUID — Xbox Series X/S and newer BT LE controllers
+        if (devicePath.IndexOf("{00001812-0000-1000-8000-00805f9b34fb}",
                                StringComparison.OrdinalIgnoreCase) >= 0)
             return HidConnectionType.Bluetooth;
 
