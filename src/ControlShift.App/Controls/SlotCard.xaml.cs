@@ -1,6 +1,5 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using ControlShift.App.ViewModels;
 using ControlShift.Core.Models;
@@ -8,22 +7,21 @@ using ControlShift.Core.Models;
 namespace ControlShift.App.Controls;
 
 /// <summary>
-/// A card control representing one of the 4 player slots (P1–P4).
-/// Displays device name, connection type badge, battery level bar, and Xbox-style accent indicator.
+/// Minimal Xbox-style controller slot card.
+/// Shows device name, connection subtitle, and a single battery glyph.
 /// </summary>
 public sealed partial class SlotCard : UserControl
 {
-    // Battery bar colors
-    private static readonly SolidColorBrush BatteryRedBrush = new(ColorHelper.FromArgb(255, 231, 72, 86));     // #E74856
-    private static readonly SolidColorBrush BatteryAmberBrush = new(ColorHelper.FromArgb(255, 245, 158, 11));   // #F59E0B
-    private static readonly SolidColorBrush BatteryGreenBrush = new(ColorHelper.FromArgb(255, 16, 124, 16));    // #107C10
-    private static readonly SolidColorBrush BatteryFullBrush = new(ColorHelper.FromArgb(255, 155, 240, 11));    // #9BF00B
+    private static readonly SolidColorBrush MutedBadgeBg = new(ColorHelper.FromArgb(255, 51, 51, 51));   // #333
+    private static readonly SolidColorBrush MutedBadgeText = new(ColorHelper.FromArgb(255, 85, 85, 85)); // #555
+    private static readonly SolidColorBrush MutedNameBrush = new(ColorHelper.FromArgb(255, 85, 85, 85)); // #555
 
-    // Badge colors
-    private static readonly SolidColorBrush BadgeMutedBrush = new(ColorHelper.FromArgb(255, 61, 61, 61));       // #3D3D3D
-    private static readonly SolidColorBrush BadgeMutedTextBrush = new(ColorHelper.FromArgb(255, 120, 120, 120)); // #787878
-
-    private const double BatteryBarMaxWidth = 32.0;
+    // Segoe Fluent Icons battery glyphs (white outline, fill varies)
+    private const string BatteryFull = "\xEBAA";  // Battery 10 (full)
+    private const string BatteryHalf = "\xEBA6";  // Battery 5 (half)
+    private const string BatteryLow = "\xEBA2";   // Battery 1 (low)
+    private const string BatteryEmpty = "\xEBA0";  // Battery 0 (empty)
+    private const string PlugIcon = "\xEBD4";      // PlugConnected
 
     public SlotCard()
     {
@@ -31,7 +29,7 @@ public sealed partial class SlotCard : UserControl
     }
 
     /// <summary>
-    /// Update the card display from a SlotViewModel.
+    /// Update the card from a SlotViewModel.
     /// </summary>
     public void SetSlot(SlotViewModel slot)
     {
@@ -48,105 +46,68 @@ public sealed partial class SlotCard : UserControl
 
     private void SetEmptyState()
     {
-        // Accent bar hidden
-        AccentBar.Visibility = Visibility.Collapsed;
+        CardBorder.Opacity = 0.4;
 
-        // Muted card border (reduced opacity)
-        CardBorder.Opacity = 0.6;
-        CardBorder.BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(80, 61, 61, 61)); // semi-transparent border
+        SlotBadgeBorder.Background = MutedBadgeBg;
+        SlotBadge.Foreground = MutedBadgeText;
 
-        // Muted badge
-        SlotBadgeBorder.Background = BadgeMutedBrush;
-        SlotBadge.Foreground = BadgeMutedTextBrush;
+        DeviceName.Text = "No controller";
+        DeviceName.Foreground = MutedNameBrush;
+        DeviceName.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
 
-        // Empty state text
-        DeviceName.Text = "No Controller";
-        DeviceName.Opacity = 0.5;
-
-        // Hide all detail elements
-        ConnectionBadge.Visibility = Visibility.Collapsed;
-        IntegratedBadge.Visibility = Visibility.Collapsed;
+        DeviceSub.Visibility = Visibility.Collapsed;
         BatteryIcon.Text = "";
-        BatteryBarContainer.Visibility = Visibility.Collapsed;
-        BatteryText.Text = "";
     }
 
     private void SetConnectedState(SlotViewModel slot)
     {
-        // Show green accent bar
-        AccentBar.Visibility = Visibility.Visible;
-
-        // Full-opacity card with solid border
         CardBorder.Opacity = 1.0;
-        CardBorder.BorderBrush = (SolidColorBrush)Application.Current.Resources["CsBorderBrush"];
 
-        // Green badge
         SlotBadgeBorder.Background = (SolidColorBrush)Application.Current.Resources["CsAccentBrush"];
         SlotBadge.Foreground = new SolidColorBrush(Colors.White);
 
-        // Device name
         DeviceName.Text = slot.DisplayName ?? "Unknown Controller";
-        DeviceName.Opacity = 1.0;
+        DeviceName.Foreground = (SolidColorBrush)Application.Current.Resources["CsTextPrimaryBrush"];
+        DeviceName.FontWeight = Microsoft.UI.Text.FontWeights.Medium;
 
-        // Connection type badge
-        if (slot.ConnectionType != ConnectionType.Unknown)
+        // Subtitle: connection type
+        var subText = slot.ConnectionType switch
         {
-            ConnectionBadge.Visibility = Visibility.Visible;
-            ConnectionText.Text = slot.ConnectionType switch
+            ConnectionType.Usb => "USB",
+            ConnectionType.Bluetooth => "Bluetooth",
+            ConnectionType.Integrated => "Integrated",
+            _ => null
+        };
+
+        if (subText != null)
+        {
+            DeviceSub.Text = subText;
+            DeviceSub.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            DeviceSub.Visibility = Visibility.Collapsed;
+        }
+
+        // Battery: single glyph, 3 fill levels + plug for wired
+        if (slot.BatteryType == "Wired")
+        {
+            BatteryIcon.Text = PlugIcon;
+        }
+        else if (slot.BatteryLevel.HasValue)
+        {
+            BatteryIcon.Text = slot.BatteryLevel.Value switch
             {
-                ConnectionType.Usb => "USB",
-                ConnectionType.Bluetooth => "BT",
-                ConnectionType.Integrated => "INT",
-                _ => ""
+                0 => BatteryLow,
+                1 => BatteryHalf,
+                2 => BatteryHalf,
+                3 => BatteryFull,
+                _ => BatteryEmpty
             };
         }
         else
         {
-            ConnectionBadge.Visibility = Visibility.Collapsed;
-        }
-
-        // Integrated badge
-        IntegratedBadge.Visibility = slot.IsIntegratedGamepad
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
-        // Battery display
-        if (slot.BatteryLevel.HasValue && slot.BatteryType != "Wired")
-        {
-            BatteryIcon.Text = "\xEBA7"; // Battery icon
-            BatteryText.Text = "";
-            SetBatteryBar(slot.BatteryLevel.Value);
-        }
-        else if (slot.BatteryType == "Wired")
-        {
-            BatteryIcon.Text = "\xE83E"; // Plug icon
-            BatteryBarContainer.Visibility = Visibility.Collapsed;
-            BatteryText.Text = "Wired";
-            BatteryText.Foreground = (SolidColorBrush)Application.Current.Resources["CsAccentBrush"];
-        }
-        else
-        {
             BatteryIcon.Text = "";
-            BatteryBarContainer.Visibility = Visibility.Collapsed;
-            BatteryText.Text = "";
         }
-    }
-
-    private void SetBatteryBar(byte level)
-    {
-        BatteryBarContainer.Visibility = Visibility.Visible;
-
-        // Set fill width and color based on battery level
-        var (fillFraction, fillBrush) = level switch
-        {
-            0 => (0.10, BatteryRedBrush),
-            1 => (0.33, BatteryAmberBrush),
-            2 => (0.66, BatteryGreenBrush),
-            3 => (1.00, BatteryFullBrush),
-            _ => (0.0, BatteryRedBrush)
-        };
-
-        BatteryBarFill.Width = BatteryBarMaxWidth * fillFraction;
-        BatteryBarFill.Background = fillBrush;
     }
 }

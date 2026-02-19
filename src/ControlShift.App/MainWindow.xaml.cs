@@ -98,6 +98,11 @@ public sealed partial class MainWindow : Window
         StatusText.Text = connected > 0
             ? $"{connected} controller{(connected != 1 ? "s" : "")} connected"
             : "No controllers detected";
+
+        // Green dot when connected, gray when idle
+        StatusDot.Fill = connected > 0
+            ? (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["CsAccentBrush"]
+            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 85, 85, 85));
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)

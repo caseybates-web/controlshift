@@ -4,83 +4,73 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="ControlShift">
 
-    <Grid Background="{StaticResource CsBackgroundBrush}" Padding="20">
+    <Grid Background="{StaticResource CsBackgroundBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header bar -->
-        <Grid Grid.Row="0" Margin="0,0,0,20">
+        <!-- Header -->
+        <Grid Grid.Row="0" Padding="20,20,20,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <!-- Xbox-style controller icon -->
-                <TextBlock Text="&#xE7FC;"
-                           FontFamily="Segoe Fluent Icons" FontSize="22"
-                           Foreground="{StaticResource CsAccentBrush}"
-                           VerticalAlignment="Center" Margin="0,0,10,0" />
                 <TextBlock Text="ControlShift"
-                           FontSize="20" FontWeight="Bold"
+                           FontSize="18" FontWeight="SemiBold"
                            Foreground="{StaticResource CsTextPrimaryBrush}"
                            VerticalAlignment="Center" />
                 <TextBlock Text="v0.1"
-                           FontSize="10" Margin="8,8,0,0" Opacity="0.5"
-                           Foreground="{StaticResource CsTextSecondaryBrush}" />
+                           FontSize="10" Opacity="0.4"
+                           Foreground="{StaticResource CsTextSecondaryBrush}"
+                           VerticalAlignment="Center"
+                           Margin="8,0,0,0" />
             </StackPanel>
 
-            <!-- Settings gear icon button -->
             <Button Grid.Column="1"
                     Background="Transparent" BorderThickness="0"
                     ToolTipService.ToolTip="Settings"
-                    Padding="10" CornerRadius="20"
+                    Padding="8" CornerRadius="6"
                     VerticalAlignment="Center">
                 <TextBlock Text="&#xE713;"
-                           FontFamily="Segoe Fluent Icons" FontSize="16"
-                           Foreground="{StaticResource CsTextSecondaryBrush}" />
+                           FontFamily="Segoe Fluent Icons" FontSize="14"
+                           Foreground="#666666" />
             </Button>
         </Grid>
 
-        <!-- Section label -->
-        <TextBlock Grid.Row="1" Text="CONTROLLERS"
-                   FontSize="11" FontWeight="SemiBold"
-                   Foreground="{StaticResource CsTextSecondaryBrush}"
-                   CharacterSpacing="80"
-                   Margin="4,0,0,10" />
-
-        <!-- Controller slot cards (P1–P4) -->
-        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-            <StackPanel x:Name="SlotPanel" Spacing="10">
-                <!-- Slot cards are populated programmatically in code-behind -->
+        <!-- Controller slot cards -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                      Padding="20,20,20,0">
+            <StackPanel x:Name="SlotPanel" Spacing="8">
+                <!-- Populated programmatically -->
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Bottom status bar -->
-        <Grid Grid.Row="3" Margin="0,16,0,0">
+        <!-- Status bar -->
+        <Grid Grid.Row="2" Padding="20,16,20,16"
+              BorderBrush="#222222" BorderThickness="0,1,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <Ellipse x:Name="StatusDot" Width="8" Height="8"
+                <Ellipse x:Name="StatusDot" Width="6" Height="6"
                          Fill="{StaticResource CsAccentBrush}" Margin="0,0,8,0" />
                 <TextBlock x:Name="StatusText" Text="Ready"
-                           FontSize="11"
-                           Foreground="{StaticResource CsTextSecondaryBrush}" />
+                           FontSize="12"
+                           Foreground="#666666" />
             </StackPanel>
 
-            <!-- Xbox-style pill refresh button -->
             <Button Grid.Column="1" x:Name="RefreshButton"
                     Click="RefreshButton_Click"
-                    Background="{StaticResource CsAccentBrush}"
-                    Foreground="White" BorderThickness="0"
-                    Padding="16,8" CornerRadius="16">
+                    Background="Transparent"
+                    BorderBrush="#333333" BorderThickness="1"
+                    Foreground="#999999"
+                    Padding="14,6" CornerRadius="8">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <TextBlock Text="&#xE72C;"
                                FontFamily="Segoe Fluent Icons" FontSize="12"

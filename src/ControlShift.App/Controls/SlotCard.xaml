@@ -3,89 +3,52 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Grid>
-        <!-- Green accent bar on connected cards (Xbox "selected" indicator) -->
-        <Border x:Name="AccentBar"
-                HorizontalAlignment="Left" Width="4"
-                Background="{StaticResource CsAccentBrush}"
-                CornerRadius="2,0,0,2"
-                Visibility="Collapsed" />
+    <!-- Minimal Xbox-style controller card -->
+    <Border x:Name="CardBorder"
+            Background="{StaticResource CsSurfaceBrush}"
+            CornerRadius="10"
+            Padding="16" MinHeight="72">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
 
-        <!-- Card body -->
-        <Border x:Name="CardBorder"
-                Background="{StaticResource CsCardBackgroundBrush}"
-                BorderBrush="{StaticResource CsBorderBrush}"
-                BorderThickness="1" CornerRadius="12"
-                Padding="16" MinHeight="88"
-                Margin="2,0,0,0">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+            <!-- Slot badge (P1–P4) -->
+            <Border x:Name="SlotBadgeBorder" Grid.Column="0"
+                    Background="{StaticResource CsAccentBrush}"
+                    CornerRadius="8" Width="32" Height="32"
+                    VerticalAlignment="Center" Margin="0,0,14,0">
+                <TextBlock x:Name="SlotBadge" Text="P1"
+                           FontSize="13" FontWeight="Bold"
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center" />
+            </Border>
 
-                <!-- Slot index badge (P1, P2, P3, P4) -->
-                <Border x:Name="SlotBadgeBorder" Grid.Column="0"
-                        Background="{StaticResource CsAccentBrush}"
-                        CornerRadius="6" Padding="10,6"
-                        VerticalAlignment="Center" Margin="0,0,14,0">
-                    <TextBlock x:Name="SlotBadge" Text="P1"
-                               FontSize="14" FontWeight="Bold"
-                               Foreground="White" />
-                </Border>
+            <!-- Device info -->
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock x:Name="DeviceName" Text="No controller"
+                           FontSize="14" FontWeight="Medium"
+                           Foreground="{StaticResource CsTextPrimaryBrush}"
+                           TextTrimming="CharacterEllipsis" />
 
-                <!-- Device info -->
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock x:Name="DeviceName" Text="No Controller"
-                               FontSize="14" FontWeight="Bold"
-                               Foreground="{StaticResource CsTextPrimaryBrush}"
-                               TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="DeviceSub" Text=""
+                           FontSize="11"
+                           Foreground="#666666"
+                           Margin="0,2,0,0"
+                           Visibility="Collapsed" />
+            </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,5,0,0">
-                        <!-- Connection type badge -->
-                        <Border x:Name="ConnectionBadge"
-                                Background="#1A1A1A" CornerRadius="4"
-                                Padding="8,3" Visibility="Collapsed">
-                            <TextBlock x:Name="ConnectionText" Text=""
-                                       FontSize="10" FontWeight="SemiBold"
-                                       Foreground="{StaticResource CsAccentBrush}" />
-                        </Border>
-
-                        <!-- Integrated gamepad indicator -->
-                        <TextBlock x:Name="IntegratedBadge" Text="INTEGRATED"
-                                   FontSize="10" FontWeight="SemiBold"
-                                   Foreground="{StaticResource CsWarningBrush}"
-                                   Visibility="Collapsed" />
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- Battery indicator -->
-                <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="6">
-                    <!-- Battery icon -->
-                    <TextBlock x:Name="BatteryIcon" Text=""
-                               FontFamily="Segoe Fluent Icons"
-                               FontSize="16" HorizontalAlignment="Center"
-                               Foreground="{StaticResource CsTextSecondaryBrush}" />
-
-                    <!-- Battery bar (visual level indicator) -->
-                    <Grid x:Name="BatteryBarContainer" Visibility="Collapsed"
-                          Width="32" Height="10" HorizontalAlignment="Center">
-                        <!-- Track (background) -->
-                        <Border Background="#1A1A1A" CornerRadius="3" />
-                        <!-- Fill -->
-                        <Border x:Name="BatteryBarFill"
-                                Background="{StaticResource CsAccentBrush}"
-                                CornerRadius="3"
-                                HorizontalAlignment="Left" />
-                    </Grid>
-
-                    <!-- Wired text label (shown instead of bar for wired connections) -->
-                    <TextBlock x:Name="BatteryText" Text=""
-                               FontSize="10" HorizontalAlignment="Center"
-                               Foreground="{StaticResource CsTextSecondaryBrush}" />
-                </StackPanel>
-            </Grid>
-        </Border>
-    </Grid>
+            <!-- Battery icon (Segoe Fluent Icons glyph) -->
+            <TextBlock x:Name="BatteryIcon" Grid.Column="2"
+                       Text=""
+                       FontFamily="Segoe Fluent Icons"
+                       FontSize="20"
+                       Foreground="#888888"
+                       VerticalAlignment="Center"
+                       Margin="8,0,0,0" />
+        </Grid>
+    </Border>
 </UserControl>
