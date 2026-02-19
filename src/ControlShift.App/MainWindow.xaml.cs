@@ -83,7 +83,7 @@ public sealed partial class MainWindow : Window
         var matcher = new ControllerMatcher(vendorDb, fingerprinter);
         _viewModel  = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher);
 
-        SetWindowSize(480, 600);
+        SetWindowSize(400, 700);
 
         // Build 4 fixed slot cards — one per XInput slot P1–P4.
         for (int i = 0; i < 4; i++)
@@ -143,7 +143,6 @@ public sealed partial class MainWindow : Window
 
     private async Task RefreshAsync()
     {
-        StatusText.Text = "Scanning...";
         await _viewModel.RefreshAsync();
         UpdateCards();
     }
@@ -155,16 +154,13 @@ public sealed partial class MainWindow : Window
             if (i < _viewModel.Slots.Count)
                 _cards[i].SetSlot(_viewModel.Slots[i]);
         }
-
-        int connected = _viewModel.Slots.Count(s => s.IsConnected);
-        StatusText.Text = connected > 0
-            ? $"{connected} controller{(connected != 1 ? "s" : "")} connected"
-            : "No controllers detected";
     }
 
-    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
+    private void ExitButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshAsync();
+        _pollTimer.Stop();
+        _navTimer.Stop();
+        this.Close();
     }
 
     // ── Navigation: XInput polling ────────────────────────────────────────────

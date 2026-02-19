@@ -13,43 +13,43 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <Grid Grid.Row="0" Padding="20,18,20,14">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="ControlShift"
-                           FontFamily="Segoe UI" FontSize="20" FontWeight="Bold"
-                           Foreground="{StaticResource XbTextBrush}" />
-                <TextBlock Text="v0.2"
-                           FontFamily="Segoe UI" FontSize="11" Margin="8,7,0,0"
-                           Foreground="{StaticResource XbTextMutedBrush}" />
-            </StackPanel>
+        <!-- Header: title left, version right -->
+        <Grid Grid.Row="0" Padding="20,20,20,14">
+            <TextBlock Text="ControlShift"
+                       FontFamily="Segoe UI" FontSize="18" FontWeight="Bold"
+                       Foreground="{StaticResource XbTextBrush}"
+                       HorizontalAlignment="Left" VerticalAlignment="Center" />
+            <TextBlock Text="v0.2"
+                       FontFamily="Segoe UI" FontSize="11"
+                       Foreground="{StaticResource XbTextMutedBrush}"
+                       HorizontalAlignment="Right" VerticalAlignment="Center" />
         </Grid>
 
-        <!-- Controller slot cards -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,0,20,0">
-            <StackPanel x:Name="SlotPanel" Spacing="8" />
+        <!-- Scrollable card list -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,0,16,0">
+            <StackPanel Spacing="0">
+
+                <!-- XInput player slots P1–P4 -->
+                <StackPanel x:Name="SlotPanel" Spacing="8" />
+
+                <!-- UNASSIGNED section: hidden until Core surfaces unmatched HID devices -->
+                <TextBlock x:Name="UnassignedHeader"
+                           Text="UNASSIGNED"
+                           FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
+                           Foreground="{StaticResource XbTextMutedBrush}"
+                           Margin="4,20,0,8"
+                           Visibility="Collapsed" />
+                <StackPanel x:Name="UnassignedPanel" Spacing="8" Visibility="Collapsed" />
+
+            </StackPanel>
         </ScrollViewer>
 
-        <!-- Footer -->
-        <Grid Grid.Row="2" Padding="20,14,20,18">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-
-            <TextBlock x:Name="StatusText" Grid.Column="0"
-                       Text="Scanning..."
-                       FontFamily="Segoe UI" FontSize="12"
-                       Foreground="{StaticResource XbTextMutedBrush}"
-                       VerticalAlignment="Center" />
-
-            <Button Grid.Column="1" x:Name="RefreshButton"
-                    Content="Refresh" Click="RefreshButton_Click"
-                    Background="{StaticResource XbAccentBrush}"
-                    Foreground="{StaticResource XbTextBrush}"
-                    BorderThickness="0"
-                    FontFamily="Segoe UI" FontSize="12" FontWeight="SemiBold"
-                    Padding="16,8" CornerRadius="2" />
-        </Grid>
+        <!-- Exit link -->
+        <HyperlinkButton Grid.Row="2"
+                         Content="Exit ControlShift"
+                         HorizontalAlignment="Center"
+                         Padding="16,14,16,20"
+                         Foreground="{StaticResource XbTextMutedBrush}"
+                         Click="ExitButton_Click" />
     </Grid>
 </Window>
