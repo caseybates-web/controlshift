@@ -192,7 +192,7 @@ Let users rename any controller card with a custom nickname (e.g. "Casey's Xbox 
 - If serial is unavailable, fall back to the HID device path (good enough for a fixed handheld gamepad)
 - Nickname takes highest display priority: `nickname → HID product string → known-device name → VID:PID`
 
-### Step 8 — Controller Navigation (current)
+### Step 8 — Controller Navigation ✓ (complete)
 
 Allow the user to navigate cards and initiate reordering without a mouse.
 
@@ -201,24 +201,35 @@ Allow the user to navigate cards and initiate reordering without a mouse.
 - Tab / Shift+Tab moves focus between cards (keyboard)
 - WinUI 3 `XYFocusUp` / `XYFocusDown` set on each card for built-in gamepad navigation
 
+**A button — tap vs. hold (gamepad only):**
+- **Tap A** (released in < 500ms) → rumble the focused controller to identify it; no reorder
+- **Hold A** (≥ 500ms) → enter reorder mode on the focused card
+  - While held: a green `ProgressBar` fills over 500ms at the bottom of the card
+  - At 500ms: progress bar hides, card enters Selected state, reorder begins
+- Keyboard Enter/Space → immediate reorder (no hold required; keyboard users skip the tap/hold distinction)
+
 **Reorder mode (one card selected):**
-- A button (or Enter/Space) selects the focused card for reordering
 - D-pad/thumbstick (or arrow keys) moves the selected card up/down in the list — live preview
-- A again (or Enter/Space) confirms the new position
+- A again (or Enter/Space on keyboard) confirms the new position
 - B (or Escape) cancels and snaps the card back to its original position
 
 **Visual states:**
-- Focused: 1px `#107C10` border
-- Selected: 3px `#107C10` border + slightly brighter card background (`#373737`)
-- Dimmed: 0.4 opacity (all other cards while one is selected)
-- Normal: 1px `#404040` border, full opacity
+- Focused: 1px `#107C10` border + scale 1.03 swell (Composition animation, 100ms ease-in-out)
+- Selected: 3px `#107C10` border + `#404040` background + scale 1.03
+- Dimmed: 0.5 opacity (all other cards while one is selected)
+- Normal: 1px `#303030` border, full opacity, scale 1.0
 
 **Implementation notes:**
-- Poll XInput at 100ms for A/B + D-pad + thumbstick (covers A/B which WinUI 3 doesn't auto-route)
-- Handle `KeyDown` on root Grid: Enter/Space = A, Escape = B, arrow Up/Down = card move (reorder mode)
+- Poll XInput at **16ms** (~60 fps) via `DispatcherTimer` (fires on UI thread — no `TryEnqueue` needed)
+- Watchdog timer at 5s checks `_navTimer.IsEnabled` and restarts if stopped
+- `newReleases = _prevGamepadButtons & ~current` detects A button release for tap/hold distinction
+- `_aHoldStart` (DateTime?) tracks when A was pressed; `_aHoldEnteredReorder` prevents double-trigger
+- `SlotCard.ShowHoldProgress(double)` / `HideHoldProgress()` control the in-card progress bar
+- `SlotCard.TriggerRumble()` is public — called by MainWindow on tap, by mouse Tapped event directly
 - Gate XInput polling on window active state (`Activated`/`Deactivated` events)
 - After any card reorder, update `XYFocusUp`/`XYFocusDown` links to match new visual order
 - Tab order (`TabIndex`) must match visual top-to-bottom order; rebuild after reorder
+- Cards have `Margin=8,4,8,4` so swell overflows into margin without hitting ScrollContentPresenter clip
 
 ### Step 9 — ViGEm + HidHide Controller Reordering
 

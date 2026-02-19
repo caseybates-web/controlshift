@@ -39,9 +39,15 @@ public sealed partial class MainWindow : Window
     // ── XInput polling ────────────────────────────────────────────────────────
 
     private readonly DispatcherTimer _navTimer;
-    private GamepadButtons           _prevGamepadButtons;
-    private short                    _prevLeftThumbY;
-    private bool                     _windowActive = true;
+    private readonly DispatcherTimer _watchdogTimer;
+    private          GamepadButtons  _prevGamepadButtons;
+    private          short           _prevLeftThumbY;
+    private          bool            _windowActive = true;
+
+    // A-button hold/tap state
+    private DateTime? _aHoldStart;           // when A was first pressed; null when not held
+    private bool      _aHoldEnteredReorder;  // true once the 500ms threshold was crossed
+    private int       _navTickCount;         // total ticks; reset by watchdog every 5s
 
     // ── Diagnostic logging ────────────────────────────────────────────────────
 
@@ -112,11 +118,18 @@ public sealed partial class MainWindow : Window
         _navTimer.Tick += NavTimer_Tick;
         _navTimer.Start();
 
+        // Watchdog: every 5s verify the nav timer is still running and restart if not.
+        // Guards against any scenario where the timer silently stops (driver errors,
+        // unhandled exceptions escaping the catch, or unexpected Stop() calls).
+        _watchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _watchdogTimer.Tick += WatchdogTimer_Tick;
+        _watchdogTimer.Start();
+
         // Gate XInput polling on window focus so we don't steal input from other apps.
         Activated += (_, args) =>
             _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
 
-        Closed += (_, _) => { _pollTimer.Stop(); _navTimer.Stop(); };
+        Closed += (_, _) => { _pollTimer.Stop(); _navTimer.Stop(); _watchdogTimer.Stop(); };
 
         // Initial scan on window open.
         _ = RefreshAsync();
@@ -171,13 +184,17 @@ public sealed partial class MainWindow : Window
 
     private void NavTimer_Tick(object? sender, object e)
     {
+        // Confirm the timer is still alive — visible in Debug Output and log file.
+        Debug.WriteLine($"NAV TICK #{_navTickCount}");
+        _navTickCount++;
+
         try
         {
             if (!_windowActive) return;
 
             // ── Phase 1: read XInput state (pure P/Invoke, no UI side-effects) ──────
 
-            GamepadButtons current  = default;
+            GamepadButtons current   = default;
             short          maxThumbY = 0;
 
             for (uint i = 0; i < 4; i++)
@@ -190,8 +207,9 @@ public sealed partial class MainWindow : Window
                 }
             }
 
-            // Edge-detect: only act on newly-pressed buttons (not held).
-            GamepadButtons newPresses = current & ~_prevGamepadButtons;
+            // Edge-detect new presses and new releases vs previous frame.
+            GamepadButtons newPresses  = current            & ~_prevGamepadButtons;
+            GamepadButtons newReleases = _prevGamepadButtons & ~current;
             _prevGamepadButtons = current;
 
             // Thumbstick threshold crossing (~25% of range).
@@ -200,29 +218,26 @@ public sealed partial class MainWindow : Window
             bool stickDown = maxThumbY < -Threshold && _prevLeftThumbY >= -Threshold;
             _prevLeftThumbY = maxThumbY;
 
-            bool navUp   = (newPresses & GamepadButtons.DPadUp)   != 0 || stickUp;
-            bool navDown = (newPresses & GamepadButtons.DPadDown)  != 0 || stickDown;
-            bool pressA  = (newPresses & GamepadButtons.A) != 0;
-            bool pressB  = (newPresses & GamepadButtons.B) != 0;
+            bool navUp        = (newPresses  & GamepadButtons.DPadUp)   != 0 || stickUp;
+            bool navDown      = (newPresses  & GamepadButtons.DPadDown)  != 0 || stickDown;
+            bool pressB       = (newPresses  & GamepadButtons.B)         != 0;
+            bool aJustPressed = (newPresses  & GamepadButtons.A)         != 0;
+            bool aHeld        = (current     & GamepadButtons.A)         != 0;
+            bool aJustReleased= (newReleases & GamepadButtons.A)         != 0;
 
-            // Nothing actionable this tick — skip early.
-            if (!navUp && !navDown && !pressA && !pressB) return;
-
-            // ── Phase 2: UI mutations — DispatcherTimer already fires on the UI thread ──
-            NavLog($"[NavTick] reorderIdx={_reorderingIndex} focusedIdx={_focusedCardIndex} " +
-                   $"up={navUp} down={navDown} A={pressA} B={pressB}");
+            // ── Phase 2: UI mutations ─────────────────────────────────────────────────
 
             if (_reorderingIndex >= 0)
             {
-                // Reorder mode: D-pad/stick moves the selected card; A confirms; B cancels.
-                if (navUp)   { NavLog("[NavTick] → MoveReorderingCard(-1)"); MoveReorderingCard(-1); }
-                if (navDown) { NavLog("[NavTick] → MoveReorderingCard(+1)"); MoveReorderingCard(+1); }
-                if (pressA)  { NavLog("[NavTick] → ConfirmReorder");         ConfirmReorder(); }
-                if (pressB)  { NavLog("[NavTick] → CancelReorder");          CancelReorder(); }
+                // ── Reorder mode: d-pad/stick moves card; A confirms; B cancels ──────
+                if (navUp)        { NavLog("[NavTick] → MoveReorderingCard(-1)"); MoveReorderingCard(-1); }
+                if (navDown)      { NavLog("[NavTick] → MoveReorderingCard(+1)"); MoveReorderingCard(+1); }
+                if (aJustPressed) { NavLog("[NavTick] → ConfirmReorder");         ConfirmReorder(); }
+                if (pressB)       { NavLog("[NavTick] → CancelReorder");          CancelReorder(); }
             }
             else
             {
-                // Normal mode: D-pad/stick moves focus; A enters reorder mode.
+                // ── Normal mode: d-pad/stick moves focus ─────────────────────────────
                 if (navUp && _focusedCardIndex > 0)
                 {
                     NavLog($"[NavTick] → Focus card {_focusedCardIndex - 1} (up)");
@@ -233,19 +248,65 @@ public sealed partial class MainWindow : Window
                     NavLog($"[NavTick] → Focus card {_focusedCardIndex + 1} (down)");
                     _cards[_focusedCardIndex + 1].Focus(FocusState.Programmatic);
                 }
-                if (pressA && _focusedCardIndex >= 0)
+
+                // ── A button: tap (<500ms) = rumble; hold (≥500ms) = reorder ────────
+
+                if (aJustPressed && _focusedCardIndex >= 0)
                 {
-                    NavLog($"[NavTick] → StartReorder on card {_focusedCardIndex}");
-                    StartReorder();
+                    // A just went down — start tracking the hold.
+                    _aHoldStart          = DateTime.UtcNow;
+                    _aHoldEnteredReorder = false;
+                    _cards[_focusedCardIndex].ShowHoldProgress(0.0);
+                    NavLog($"[NavTick] A pressed on card {_focusedCardIndex} — hold tracking started");
+                }
+
+                if (aHeld && !aJustPressed && _aHoldStart.HasValue && _focusedCardIndex >= 0)
+                {
+                    // A is being held — update progress bar and check 500ms threshold.
+                    double elapsedMs = (DateTime.UtcNow - _aHoldStart.Value).TotalMilliseconds;
+                    _cards[_focusedCardIndex].ShowHoldProgress(elapsedMs / 500.0);
+
+                    if (elapsedMs >= 500.0 && !_aHoldEnteredReorder)
+                    {
+                        _aHoldEnteredReorder = true;
+                        _cards[_focusedCardIndex].HideHoldProgress();
+                        NavLog("[NavTick] → StartReorder (hold ≥500ms)");
+                        StartReorder();
+                    }
+                }
+
+                if (aJustReleased)
+                {
+                    if (_aHoldStart.HasValue && !_aHoldEnteredReorder && _focusedCardIndex >= 0)
+                    {
+                        // Tap (released before 500ms) — rumble to identify, no reorder.
+                        NavLog("[NavTick] → TriggerRumble (tap <500ms)");
+                        _cards[_focusedCardIndex].HideHoldProgress();
+                        _cards[_focusedCardIndex].TriggerRumble();
+                    }
+                    _aHoldStart          = null;
+                    _aHoldEnteredReorder = false;
                 }
             }
-
-            NavLog("[NavTick] done");
         }
         catch (Exception ex)
         {
             NavLog($"[NavTimer_Tick ERROR] {ex}");
         }
+    }
+
+    private void WatchdogTimer_Tick(object? sender, object e)
+    {
+        NavLog($"[Watchdog] navTimer.IsEnabled={_navTimer.IsEnabled} " +
+               $"windowActive={_windowActive} ticksSinceLast={_navTickCount}");
+
+        if (!_navTimer.IsEnabled)
+        {
+            NavLog("[Watchdog] *** nav timer was stopped — restarting ***");
+            _navTimer.Start();
+        }
+
+        _navTickCount = 0;
     }
 
     // ── Navigation: keyboard ──────────────────────────────────────────────────
@@ -277,8 +338,8 @@ public sealed partial class MainWindow : Window
                     break;
                 case VirtualKey.Enter:
                 case VirtualKey.Space:
-                case VirtualKey.GamepadA:
-                    NavLog("[KeyDown] ConfirmReorder");
+                    // Keyboard confirm: immediate. GamepadA is handled via XInput hold detection.
+                    NavLog("[KeyDown] ConfirmReorder (keyboard)");
                     ConfirmReorder();
                     e.Handled = true;
                     break;
@@ -296,10 +357,10 @@ public sealed partial class MainWindow : Window
             {
                 case VirtualKey.Enter:
                 case VirtualKey.Space:
-                case VirtualKey.GamepadA:
+                    // Keyboard reorder: immediate. GamepadA uses XInput hold detection (tap=rumble, hold=reorder).
                     if (_focusedCardIndex >= 0)
                     {
-                        NavLog($"[KeyDown] StartReorder on card {_focusedCardIndex}");
+                        NavLog($"[KeyDown] StartReorder (keyboard) on card {_focusedCardIndex}");
                         StartReorder();
                         e.Handled = true;
                     }
@@ -312,6 +373,13 @@ public sealed partial class MainWindow : Window
 
     private void OnCardGotFocus(int idx)
     {
+        // If the user moved focus mid-hold, cancel the pending hold on the old card.
+        if (_aHoldStart.HasValue && _focusedCardIndex >= 0 && _focusedCardIndex != idx)
+        {
+            _cards[_focusedCardIndex].HideHoldProgress();
+            _aHoldStart          = null;
+            _aHoldEnteredReorder = false;
+        }
         _focusedCardIndex = idx;
         UpdateCardStates();
     }

@@ -9,84 +9,104 @@
             BorderBrush="#303030"
             BorderThickness="1" CornerRadius="12"
             Padding="16,14" MinHeight="80">
+
+        <!-- Two-row grid: main content + hold-to-reorder progress bar -->
         <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-            <!-- Player index badge (P1–P4) -->
-            <Border x:Name="PlayerBadgeBorder" Grid.Column="0"
-                    Background="#555555"
-                    CornerRadius="8" Padding="10,5"
-                    VerticalAlignment="Center" Margin="0,0,14,0">
-                <TextBlock x:Name="SlotBadge" Text="P1"
-                           FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
-                           Foreground="{StaticResource XbTextBrush}" />
-            </Border>
+            <!-- Row 0: player badge + device info + battery -->
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-            <!-- Connected device info — visible only when slot is occupied -->
-            <StackPanel x:Name="ConnectedContent" Grid.Column="1"
-                        VerticalAlignment="Center" Spacing="3"
-                        Visibility="Collapsed">
+                <!-- Player index badge (P1–P4) -->
+                <Border x:Name="PlayerBadgeBorder" Grid.Column="0"
+                        Background="#555555"
+                        CornerRadius="8" Padding="10,5"
+                        VerticalAlignment="Center" Margin="0,0,14,0">
+                    <TextBlock x:Name="SlotBadge" Text="P1"
+                               FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource XbTextBrush}" />
+                </Border>
 
-                <!-- Controller name -->
-                <TextBlock x:Name="DeviceName" Text=""
-                           FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"
-                           Foreground="{StaticResource XbTextBrush}"
-                           TextTrimming="CharacterEllipsis" />
+                <!-- Connected device info — visible only when slot is occupied -->
+                <StackPanel x:Name="ConnectedContent" Grid.Column="1"
+                            VerticalAlignment="Center" Spacing="3"
+                            Visibility="Collapsed">
 
-                <!-- Connection type: plain small text below name -->
-                <TextBlock x:Name="ConnectionText" Text=""
-                           FontFamily="Segoe UI" FontSize="11"
-                           Foreground="#ABABAB" />
+                    <!-- Controller name -->
+                    <TextBlock x:Name="DeviceName" Text=""
+                               FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"
+                               Foreground="{StaticResource XbTextBrush}"
+                               TextTrimming="CharacterEllipsis" />
 
-                <!-- Badges + VID:PID row -->
-                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                    <!-- Connection type: plain small text below name -->
+                    <TextBlock x:Name="ConnectionText" Text=""
+                               FontFamily="Segoe UI" FontSize="11"
+                               Foreground="#ABABAB" />
 
-                    <Border x:Name="IntegratedBadge"
-                            Background="#1D4B1D" CornerRadius="8"
-                            Padding="8,2" Visibility="Collapsed">
-                        <TextBlock Text="INTEGRATED"
-                                   FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
-                                   Foreground="{StaticResource XbAccentBrush}" />
-                    </Border>
+                    <!-- Badges + VID:PID row -->
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
 
-                    <Border x:Name="BrandBadge"
-                            Background="#3A3A3A" CornerRadius="8"
-                            Padding="8,2" Visibility="Collapsed">
-                        <TextBlock x:Name="BrandText" Text=""
-                                   FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
-                                   Foreground="#ABABAB" />
-                    </Border>
+                        <Border x:Name="IntegratedBadge"
+                                Background="#1D4B1D" CornerRadius="8"
+                                Padding="8,2" Visibility="Collapsed">
+                            <TextBlock Text="INTEGRATED"
+                                       FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{StaticResource XbAccentBrush}" />
+                        </Border>
 
-                    <TextBlock x:Name="VidPidText" Text=""
-                               FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="10"
-                               Foreground="#666666" VerticalAlignment="Center"
-                               Visibility="Collapsed" />
+                        <Border x:Name="BrandBadge"
+                                Background="#3A3A3A" CornerRadius="8"
+                                Padding="8,2" Visibility="Collapsed">
+                            <TextBlock x:Name="BrandText" Text=""
+                                       FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
+                                       Foreground="#ABABAB" />
+                        </Border>
 
+                        <TextBlock x:Name="VidPidText" Text=""
+                                   FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="10"
+                                   Foreground="#666666" VerticalAlignment="Center"
+                                   Visibility="Collapsed" />
+
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
 
-            <!-- Empty slot placeholder — dash centered in the info column -->
-            <TextBlock x:Name="EmptyDash" Grid.Column="1"
-                       Text="—" VerticalAlignment="Center"
-                       FontFamily="Segoe UI" FontSize="20"
-                       Foreground="#444444" />
+                <!-- Empty slot placeholder — dash centered in the info column -->
+                <TextBlock x:Name="EmptyDash" Grid.Column="1"
+                           Text="—" VerticalAlignment="Center"
+                           FontFamily="Segoe UI" FontSize="20"
+                           Foreground="#444444" />
 
-            <!-- Battery indicator -->
-            <StackPanel x:Name="BatterySection" Grid.Column="2"
-                        Orientation="Horizontal" VerticalAlignment="Center"
-                        Spacing="4" Visibility="Collapsed">
-                <TextBlock x:Name="BatteryIcon" Text=""
-                           FontFamily="Segoe MDL2 Assets" FontSize="14"
-                           Foreground="#ABABAB" />
-                <TextBlock x:Name="BatteryText" Text=""
-                           FontFamily="Segoe UI" FontSize="11"
-                           Foreground="#ABABAB" />
-            </StackPanel>
+                <!-- Battery indicator -->
+                <StackPanel x:Name="BatterySection" Grid.Column="2"
+                            Orientation="Horizontal" VerticalAlignment="Center"
+                            Spacing="4" Visibility="Collapsed">
+                    <TextBlock x:Name="BatteryIcon" Text=""
+                               FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               Foreground="#ABABAB" />
+                    <TextBlock x:Name="BatteryText" Text=""
+                               FontFamily="Segoe UI" FontSize="11"
+                               Foreground="#ABABAB" />
+                </StackPanel>
+            </Grid>
 
+            <!-- Row 1: hold-to-reorder progress bar.
+                 Fills green over 500ms while A is held.
+                 Collapsed until a hold begins; hidden immediately on tap or reorder entry. -->
+            <ProgressBar x:Name="HoldProgressBar" Grid.Row="1"
+                         Minimum="0" Maximum="1" Value="0"
+                         Height="3" Margin="0,10,0,0"
+                         Foreground="#107C10"
+                         Background="Transparent"
+                         IsIndeterminate="False"
+                         Visibility="Collapsed" />
         </Grid>
     </Border>
 </UserControl>

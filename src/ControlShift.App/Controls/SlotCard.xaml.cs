@@ -210,13 +210,35 @@ public sealed partial class SlotCard : UserControl
         visual.StartAnimation("Scale.Y", anim);
     }
 
-    // ── Rumble on tap ─────────────────────────────────────────────────────────
+    // ── Hold-to-reorder progress bar ──────────────────────────────────────────
 
     /// <summary>
-    /// Tap handler — 200ms rumble at 25% strength to identify this controller.
-    /// Only fires for connected XInput controllers; HID-only devices silently skip.
+    /// Show the hold-progress bar and set its fill to [0,1].
+    /// Called by MainWindow every nav tick while the A button is held.
     /// </summary>
-    private async void SlotCard_Tapped(object sender, TappedRoutedEventArgs e)
+    public void ShowHoldProgress(double value)
+    {
+        HoldProgressBar.Value      = Math.Clamp(value, 0.0, 1.0);
+        HoldProgressBar.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Collapse and reset the progress bar.</summary>
+    public void HideHoldProgress()
+    {
+        HoldProgressBar.Visibility = Visibility.Collapsed;
+        HoldProgressBar.Value      = 0;
+    }
+
+    // ── Rumble ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fire a 200ms rumble pulse at 25% strength.
+    /// Called by MainWindow on A-tap and by the mouse/touch Tapped event.
+    /// Safe to call if not connected — silently skips.
+    /// </summary>
+    public void TriggerRumble() => _ = RumbleAsync();
+
+    private async Task RumbleAsync()
     {
         if (_slot is null || !_slot.IsConnected || _isRumbling) return;
 
@@ -233,8 +255,6 @@ public sealed partial class SlotCard : UserControl
             await Task.Delay(200);
 
             XInput.SetVibration((uint)_slot.SlotIndex, 0, 0);
-
-            // Restore to whatever nav state the card had before the tap.
             ApplyCardState();
         }
         finally
@@ -242,4 +262,12 @@ public sealed partial class SlotCard : UserControl
             _isRumbling = false;
         }
     }
+
+    // ── Mouse / touch tap ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Mouse/touch tap handler — rumbles to identify this controller.
+    /// Gamepad A-tap is handled separately by MainWindow (hold vs tap detection).
+    /// </summary>
+    private void SlotCard_Tapped(object sender, TappedRoutedEventArgs e) => TriggerRumble();
 }
