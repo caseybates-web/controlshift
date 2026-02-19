@@ -26,11 +26,14 @@
         </Grid>
 
         <!-- Scrollable card list -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,0,16,0">
+        <!-- Padding="16,6" gives 6px top/bottom clearance inside the viewport so
+             the scale-swell on the first/last card is not clipped by ScrollViewer. -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,6,16,6">
             <StackPanel Spacing="0">
 
-                <!-- XInput player slots P1–P4 -->
-                <StackPanel x:Name="SlotPanel" Spacing="8" />
+                <!-- Spacing="0" — card-to-card gap comes from the 4px Margin on each
+                     CardBorder: bottom 4px + top 4px = 8px visible gap, same as before. -->
+                <StackPanel x:Name="SlotPanel" Spacing="0" />
 
                 <!-- UNASSIGNED section: hidden until Core surfaces unmatched HID devices -->
                 <TextBlock x:Name="UnassignedHeader"

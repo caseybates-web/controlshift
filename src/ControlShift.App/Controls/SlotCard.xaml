@@ -4,11 +4,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Tapped="SlotCard_Tapped">
 
+    <!-- Margin="4" gives the Composition scale-swell 4px clearance on all sides
+         so the 1.03 scale does not clip against the parent panel's layout bounds. -->
     <Border x:Name="CardBorder"
             Background="#222222"
             BorderBrush="#303030"
             BorderThickness="1" CornerRadius="12"
-            Padding="16,14" MinHeight="80">
+            Padding="16,14" MinHeight="80"
+            Margin="4">
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
