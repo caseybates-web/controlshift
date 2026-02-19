@@ -26,6 +26,16 @@ public class ControllerMatcherTests
         => new(vid, pid, null,
                $@"\\?\BTHENUM#{{00001124-0000-1000-8000-00805f9b34fb}}&IG_0{slotIndex}&VID_{vid}&PID_{pid}");
 
+    /// <summary>Bluetooth LE device path containing BTHLEDevice AND an IG_0{slotIndex} marker.</summary>
+    private static HidDeviceInfo BthleDevice(string vid, string pid, int slotIndex)
+        => new(vid, pid, null,
+               $@"\\?\BTHLEDevice#{{00001124-0000-1000-8000-00805f9b34fb}}&IG_0{slotIndex}&VID_{vid}&PID_{pid}");
+
+    /// <summary>Alternate BT LE path containing BLUETOOTHLEDEVICE AND an IG_0{slotIndex} marker.</summary>
+    private static HidDeviceInfo BluetoothLeDevice(string vid, string pid, int slotIndex)
+        => new(vid, pid, null,
+               $@"\\?\BLUETOOTHLEDEVICE#{{00001124-0000-1000-8000-00805f9b34fb}}&IG_0{slotIndex}&VID_{vid}&PID_{pid}");
+
     private static IDeviceFingerprinter EmptyFingerprinter()
     {
         var mock = new Mock<IDeviceFingerprinter>();
@@ -81,21 +91,17 @@ public class ControllerMatcherTests
         Assert.Equal(hid, result[0].Hid);
     }
 
-    // Fallback matching: when the exact IG_0N path doesn't match the XInput slot,
-    // the matcher tries all other IG_0X paths so BT controllers are still identified
-    // even when Windows' IG index doesn't align with the runtime XInput player index.
+    // Exact-only matching: a HID device whose path contains IG_01 does NOT match XInput slot 0.
     [Fact]
-    public void Match_WrongIgMarker_FallbackFindsDevice()
+    public void Match_WrongIgMarker_HidIsNull()
     {
         var matcher = MakeMatcher();
-        // Slot 0 is connected but only a HID device with IG_01 exists (simulates BT scenario
-        // where Windows assigned IG_01 before slot re-ordering pushed it to XInput slot 0).
+        // Only a HID device with IG_01 exists — XInput slot 0 requires IG_00.
         var hid = UsbDevice("045E", "028E", slotIndex: 1); // IG_01 path, XInput slot 0
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
-        // Pass-2 fallback should find the IG_01 device for XInput slot 0.
-        Assert.NotNull(result[0].Hid);
-        Assert.Equal("045E", result[0].Hid!.Vid);
+        // No fallback — exact match only, so slot 0 gets no HID device.
+        Assert.Null(result[0].Hid);
     }
 
     [Fact]
@@ -195,6 +201,26 @@ public class ControllerMatcherTests
         var matcher = MakeMatcher();
         var hid = new HidDeviceInfo("045E", "02E0", null,
             @"\\?\HID#{00001124-0000-1000-8000-00805f9b34fb}&IG_00&VID_045E");
+        var result = matcher.Match([ConnectedSlot(0)], [hid]);
+
+        Assert.Equal(HidConnectionType.Bluetooth, result[0].HidConnectionType);
+    }
+
+    [Fact]
+    public void Match_BthleDeviceInPath_ReturnsBluetooth()
+    {
+        var matcher = MakeMatcher();
+        var hid = BthleDevice("045E", "02E0", slotIndex: 0);
+        var result = matcher.Match([ConnectedSlot(0)], [hid]);
+
+        Assert.Equal(HidConnectionType.Bluetooth, result[0].HidConnectionType);
+    }
+
+    [Fact]
+    public void Match_BluetoothledeviceInPath_ReturnsBluetooth()
+    {
+        var matcher = MakeMatcher();
+        var hid = BluetoothLeDevice("045E", "02E0", slotIndex: 0);
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
         Assert.Equal(HidConnectionType.Bluetooth, result[0].HidConnectionType);

@@ -116,21 +116,18 @@ public sealed class SlotViewModel : INotifyPropertyChanged
             return;
         }
 
-        // Device name priority:
-        //   1. HID product string (non-empty — HidSharp returns null or "" for some BT devices)
-        //   2. Known-device name from devices database
-        //   3. Vendor brand + "Controller" (e.g. "Xbox Controller") when product string is missing
-        //   4. VID:PID hex fallback
-        //   5. "Controller" (last resort when HID match failed entirely)
         string? productName = mc.Hid?.ProductName;
         if (string.IsNullOrWhiteSpace(productName)) productName = null;
 
+        // Device name priority:
+        //   1. HID product string (non-empty)
+        //   2. Known-device name from devices database
+        //   3. Vendor brand + "Controller" (e.g. "Xbox Controller") when brand is known
+        //   4. "Unknown Controller" (last resort)
         DeviceName = productName
                      ?? mc.KnownDeviceName
-                     ?? (!string.IsNullOrEmpty(mc.VendorBrand) && mc.Hid is not null
-                             ? $"{mc.VendorBrand} Controller" : null)
-                     ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : null)
-                     ?? "Controller";
+                     ?? (!string.IsNullOrEmpty(mc.VendorBrand) ? $"{mc.VendorBrand} Controller" : null)
+                     ?? "Unknown Controller";
 
         // Connection label.
         // HID path detection covers most cases. XInput override: if the HID path doesn't

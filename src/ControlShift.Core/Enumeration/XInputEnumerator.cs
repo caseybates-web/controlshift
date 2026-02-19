@@ -58,10 +58,12 @@ public sealed class XInputEnumerator : IXInputEnumerator
                         $"type={(int)battery.BatteryType}({battery.BatteryType}) " +
                         $"level={(int)battery.BatteryLevel}({battery.BatteryLevel})");
 
+        // Wireless = battery present AND type is neither Wired nor Disconnected.
+        // BatteryType.Unknown is allowed — some wireless receivers report Unknown
+        // transiently while the controller is still clearly not cable-connected.
         bool isWireless = hasBattery
             && battery.BatteryType != BatteryType.Wired
-            && battery.BatteryType != BatteryType.Disconnected
-            && battery.BatteryType != BatteryType.Unknown;
+            && battery.BatteryType != BatteryType.Disconnected;
 
         int? batteryPercent = null;
         if (isWireless)
