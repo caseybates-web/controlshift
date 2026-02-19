@@ -102,8 +102,9 @@ public sealed partial class MainWindow : Window
         _pollTimer.Tick += async (_, _) => await RefreshAsync();
         _pollTimer.Start();
 
-        // Poll XInput at 100ms for A/B buttons and D-pad navigation.
-        _navTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        // Poll XInput at 16ms (~60 fps) for A/B buttons and D-pad navigation.
+        // DispatcherTimer fires on the UI thread, so no DispatcherQueue.TryEnqueue needed.
+        _navTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _navTimer.Tick += NavTimer_Tick;
         _navTimer.Start();
 
@@ -204,71 +205,42 @@ public sealed partial class MainWindow : Window
             bool pressA  = (newPresses & GamepadButtons.A) != 0;
             bool pressB  = (newPresses & GamepadButtons.B) != 0;
 
-            // Nothing actionable this tick — skip the dispatch overhead entirely.
+            // Nothing actionable this tick — skip early.
             if (!navUp && !navDown && !pressA && !pressB) return;
 
-            // ── Phase 2: dispatch UI mutations to the UI thread ──────────────────
-            // Snapshot the computed booleans so the lambda captures values, not variables.
-            bool snapUp = navUp, snapDown = navDown, snapA = pressA, snapB = pressB;
+            // ── Phase 2: UI mutations — DispatcherTimer already fires on the UI thread ──
+            NavLog($"[NavTick] reorderIdx={_reorderingIndex} focusedIdx={_focusedCardIndex} " +
+                   $"up={navUp} down={navDown} A={pressA} B={pressB}");
 
-            DispatcherQueue.TryEnqueue(() =>
+            if (_reorderingIndex >= 0)
             {
-                try
+                // Reorder mode: D-pad/stick moves the selected card; A confirms; B cancels.
+                if (navUp)   { NavLog("[NavTick] → MoveReorderingCard(-1)"); MoveReorderingCard(-1); }
+                if (navDown) { NavLog("[NavTick] → MoveReorderingCard(+1)"); MoveReorderingCard(+1); }
+                if (pressA)  { NavLog("[NavTick] → ConfirmReorder");         ConfirmReorder(); }
+                if (pressB)  { NavLog("[NavTick] → CancelReorder");          CancelReorder(); }
+            }
+            else
+            {
+                // Normal mode: D-pad/stick moves focus; A enters reorder mode.
+                if (navUp && _focusedCardIndex > 0)
                 {
-                    NavLog($"[NavDispatch] reorderIdx={_reorderingIndex} focusedIdx={_focusedCardIndex} " +
-                           $"up={snapUp} down={snapDown} A={snapA} B={snapB}");
-
-                    if (_reorderingIndex >= 0)
-                    {
-                        // Reorder mode: D-pad/stick moves the selected card; A confirms; B cancels.
-                        if (snapUp)
-                        {
-                            NavLog("[NavDispatch] → MoveReorderingCard(-1)");
-                            MoveReorderingCard(-1);
-                        }
-                        if (snapDown)
-                        {
-                            NavLog("[NavDispatch] → MoveReorderingCard(+1)");
-                            MoveReorderingCard(+1);
-                        }
-                        if (snapA)
-                        {
-                            NavLog("[NavDispatch] → ConfirmReorder");
-                            ConfirmReorder();
-                        }
-                        if (snapB)
-                        {
-                            NavLog("[NavDispatch] → CancelReorder");
-                            CancelReorder();
-                        }
-                    }
-                    else
-                    {
-                        // Normal mode: D-pad/stick moves focus; A enters reorder mode.
-                        if (snapUp && _focusedCardIndex > 0)
-                        {
-                            NavLog($"[NavDispatch] → Focus card {_focusedCardIndex - 1} (up)");
-                            _cards[_focusedCardIndex - 1].Focus(FocusState.Programmatic);
-                        }
-                        if (snapDown && _focusedCardIndex >= 0 && _focusedCardIndex < _cards.Length - 1)
-                        {
-                            NavLog($"[NavDispatch] → Focus card {_focusedCardIndex + 1} (down)");
-                            _cards[_focusedCardIndex + 1].Focus(FocusState.Programmatic);
-                        }
-                        if (snapA && _focusedCardIndex >= 0)
-                        {
-                            NavLog($"[NavDispatch] → StartReorder on card {_focusedCardIndex}");
-                            StartReorder();
-                        }
-                    }
-
-                    NavLog("[NavDispatch] done");
+                    NavLog($"[NavTick] → Focus card {_focusedCardIndex - 1} (up)");
+                    _cards[_focusedCardIndex - 1].Focus(FocusState.Programmatic);
                 }
-                catch (Exception uiEx)
+                if (navDown && _focusedCardIndex >= 0 && _focusedCardIndex < _cards.Length - 1)
                 {
-                    NavLog($"[NavDispatch ERROR] {uiEx}");
+                    NavLog($"[NavTick] → Focus card {_focusedCardIndex + 1} (down)");
+                    _cards[_focusedCardIndex + 1].Focus(FocusState.Programmatic);
                 }
-            });
+                if (pressA && _focusedCardIndex >= 0)
+                {
+                    NavLog($"[NavTick] → StartReorder on card {_focusedCardIndex}");
+                    StartReorder();
+                }
+            }
+
+            NavLog("[NavTick] done");
         }
         catch (Exception ex)
         {
