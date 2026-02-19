@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -150,58 +151,79 @@ public sealed partial class MainWindow : Window
 
     private void NavTimer_Tick(object? sender, object e)
     {
-        if (!_windowActive) return;
-
-        // Aggregate button state across all four slots — any connected controller can navigate.
-        GamepadButtons current  = default;
-        short          maxThumbY = 0;
-
-        for (uint i = 0; i < 4; i++)
+        try
         {
-            if (XInput.GetState(i, out State state))
+            if (!_windowActive) return;
+
+            // ── Phase 1: read XInput state (pure P/Invoke, no UI side-effects) ──────
+
+            GamepadButtons current  = default;
+            short          maxThumbY = 0;
+
+            for (uint i = 0; i < 4; i++)
             {
-                current |= state.Gamepad.Buttons;
-                if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
-                    maxThumbY = state.Gamepad.LeftThumbY;
+                if (XInput.GetState(i, out State state))
+                {
+                    current |= state.Gamepad.Buttons;
+                    if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
+                        maxThumbY = state.Gamepad.LeftThumbY;
+                }
             }
+
+            // Edge-detect: only act on newly-pressed buttons (not held).
+            GamepadButtons newPresses = current & ~_prevGamepadButtons;
+            _prevGamepadButtons = current;
+
+            // Thumbstick threshold crossing (~25% of range).
+            const short Threshold = 8192;
+            bool stickUp   = maxThumbY >  Threshold && _prevLeftThumbY <=  Threshold;
+            bool stickDown = maxThumbY < -Threshold && _prevLeftThumbY >= -Threshold;
+            _prevLeftThumbY = maxThumbY;
+
+            bool navUp   = (newPresses & GamepadButtons.DPadUp)   != 0 || stickUp;
+            bool navDown = (newPresses & GamepadButtons.DPadDown)  != 0 || stickDown;
+            bool pressA  = (newPresses & GamepadButtons.A) != 0;
+            bool pressB  = (newPresses & GamepadButtons.B) != 0;
+
+            // Nothing actionable this tick — skip the dispatch overhead entirely.
+            if (!navUp && !navDown && !pressA && !pressB) return;
+
+            // ── Phase 2: dispatch UI mutations to the UI thread ──────────────────
+            // Snapshot the computed booleans so the lambda captures values, not variables.
+            bool snapUp = navUp, snapDown = navDown, snapA = pressA, snapB = pressB;
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    if (_reorderingIndex >= 0)
+                    {
+                        // Reorder mode: D-pad/stick moves the selected card; A confirms; B cancels.
+                        if (snapUp)   MoveReorderingCard(-1);
+                        if (snapDown) MoveReorderingCard(+1);
+                        if (snapA)    ConfirmReorder();
+                        if (snapB)    CancelReorder();
+                    }
+                    else
+                    {
+                        // Normal mode: D-pad/stick moves focus; A enters reorder mode.
+                        if (snapUp   && _focusedCardIndex > 0)
+                            _cards[_focusedCardIndex - 1].Focus(FocusState.Programmatic);
+                        if (snapDown && _focusedCardIndex >= 0 && _focusedCardIndex < _cards.Length - 1)
+                            _cards[_focusedCardIndex + 1].Focus(FocusState.Programmatic);
+                        if (snapA && _focusedCardIndex >= 0)
+                            StartReorder();
+                    }
+                }
+                catch (Exception uiEx)
+                {
+                    Debug.WriteLine($"[NavTimer UI dispatch] {uiEx}");
+                }
+            });
         }
-
-        // Edge-detect: only act on newly-pressed buttons (not held).
-        GamepadButtons newPresses = current & ~_prevGamepadButtons;
-        _prevGamepadButtons = current;
-
-        // Thumbstick threshold crossing (~25% of range).
-        const short Threshold = 8192;
-        bool stickUp   = maxThumbY >  Threshold && _prevLeftThumbY <=  Threshold;
-        bool stickDown = maxThumbY < -Threshold && _prevLeftThumbY >= -Threshold;
-        _prevLeftThumbY = maxThumbY;
-
-        bool dpadUp   = (newPresses & GamepadButtons.DPadUp)   != 0;
-        bool dpadDown = (newPresses & GamepadButtons.DPadDown)  != 0;
-        bool pressA   = (newPresses & GamepadButtons.A) != 0;
-        bool pressB   = (newPresses & GamepadButtons.B) != 0;
-
-        bool navUp   = dpadUp   || stickUp;
-        bool navDown = dpadDown || stickDown;
-
-        if (_reorderingIndex >= 0)
+        catch (Exception ex)
         {
-            // Reorder mode: D-pad/stick moves the selected card; A confirms; B cancels.
-            if (navUp)   MoveReorderingCard(-1);
-            if (navDown) MoveReorderingCard(+1);
-            if (pressA)  ConfirmReorder();
-            if (pressB)  CancelReorder();
-        }
-        else
-        {
-            // Normal mode: D-pad/stick moves focus; A enters reorder mode.
-            // (WinUI 3 XYFocus also handles D-pad natively — polling catches A/B.)
-            if (navUp   && _focusedCardIndex > 0)
-                _cards[_focusedCardIndex - 1].Focus(FocusState.Programmatic);
-            if (navDown && _focusedCardIndex >= 0 && _focusedCardIndex < _cards.Length - 1)
-                _cards[_focusedCardIndex + 1].Focus(FocusState.Programmatic);
-            if (pressA && _focusedCardIndex >= 0)
-                StartReorder();
+            Debug.WriteLine($"[NavTimer_Tick] {ex}");
         }
     }
 
