@@ -1,6 +1,7 @@
 using Moq;
 using FluentAssertions;
 using ControlShift.Core.Enumeration;
+using ControlShift.Core.Devices;
 using ControlShift.Core.Models;
 
 namespace ControlShift.Core.Tests.Enumeration;
@@ -70,7 +71,19 @@ public class HidEnumeratorTests
     public void RealEnumerator_DoesNotThrow()
     {
         // Integration test: HidSharp enumerate should not throw even with no controllers.
-        var enumerator = new HidEnumerator();
+        var knownDb = new KnownDeviceDatabase();
+        var enumerator = new HidEnumerator(knownDb);
+        var act = () => enumerator.EnumerateGameControllers();
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void RealEnumerator_WithKnownVids_DoesNotThrow()
+    {
+        // With known devices loaded, the VID fallback path runs without error.
+        var knownDb = new KnownDeviceDatabase();
+        knownDb.Load(Path.Combine(AppContext.BaseDirectory, "TestData", "known-devices-test.json"));
+        var enumerator = new HidEnumerator(knownDb);
         var act = () => enumerator.EnumerateGameControllers();
         act.Should().NotThrow();
     }

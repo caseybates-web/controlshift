@@ -82,4 +82,15 @@ public sealed class KnownDeviceDatabase
     /// Number of devices currently loaded.
     /// </summary>
     public int Count => _devicesByVidPid.Count;
+
+    /// <summary>
+    /// Returns all known VIDs (uppercase hex). Used by HidEnumerator to include
+    /// vendor-specific HID devices that don't use standard gamepad usage pages.
+    /// </summary>
+    public IReadOnlySet<string> GetKnownVids()
+    {
+        return _devicesByVidPid.Values
+            .Select(d => d.Vid.ToUpperInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 }
