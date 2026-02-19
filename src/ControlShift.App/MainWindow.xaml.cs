@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Vortice.XInput;
 using Windows.Graphics;
 using Windows.System;
@@ -70,6 +72,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        TrySetSystemBackdrop();
 
         NavLog($"MainWindow ctor — log: {NavLogPath}");
 
@@ -517,6 +520,29 @@ public sealed partial class MainWindow : Window
         {
             NavLog($"[UpdateXYFocusLinks ERROR] {ex}");
         }
+    }
+
+    // ── System backdrop (Mica / Acrylic) ──────────────────────────────────────
+
+    /// <summary>
+    /// Attempts to apply the best available system backdrop.
+    /// Mica (Windows 11) → Acrylic → solid #1A1A1A fallback.
+    /// When a backdrop is set, the root Grid background is cleared so the
+    /// translucent material shows through.
+    /// </summary>
+    private void TrySetSystemBackdrop()
+    {
+        if (MicaController.IsSupported())
+        {
+            this.SystemBackdrop = new MicaBackdrop();
+            ContentGrid.Background = null;
+        }
+        else if (DesktopAcrylicController.IsSupported())
+        {
+            this.SystemBackdrop = new DesktopAcrylicBackdrop();
+            ContentGrid.Background = null;
+        }
+        // else: ContentGrid keeps solid XbBackgroundBrush — backdrop unavailable
     }
 
     // ── Window sizing ─────────────────────────────────────────────────────────

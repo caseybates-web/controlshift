@@ -35,11 +35,11 @@ public sealed partial class SlotCard : UserControl
     // ── Card state colors ─────────────────────────────────────────────────────
 
     private static readonly Color ColorBorderNormal   = Color.FromArgb(255,  48,  48,  48); // #303030
-    private static readonly Color ColorBorderFocused  = Color.FromArgb(255,  16, 124,  16); // #107C10
-    private static readonly Color ColorBgEmpty        = Color.FromArgb(255,  34,  34,  34); // #222222
-    private static readonly Color ColorBgNormal       = Color.FromArgb(255,  45,  45,  45); // #2D2D2D
-    private static readonly Color ColorBgFocused      = Color.FromArgb(255,  56,  56,  56); // #383838
-    private static readonly Color ColorBgSelected     = Color.FromArgb(255,  64,  64,  64); // #404040
+    private static readonly Color ColorBorderFocused  = Color.FromArgb(255, 255, 255, 255); // white glow ring
+    private static readonly Color ColorBgEmpty        = Color.FromArgb(217,  34,  34,  34); // #D9222222 ~85%
+    private static readonly Color ColorBgNormal       = Color.FromArgb(217,  45,  45,  45); // ~85% opacity
+    private static readonly Color ColorBgFocused      = Color.FromArgb(217,  56,  56,  56); // ~85% opacity
+    private static readonly Color ColorBgSelected     = Color.FromArgb(217,  64,  64,  64); // ~85% opacity
     private static readonly Color ColorBadgeEmpty     = Color.FromArgb(255,  85,  85,  85); // #555555
     private static readonly Color ColorBadgeConnected = Color.FromArgb(255,  16, 124,  16); // #107C10
 
@@ -147,22 +147,25 @@ public sealed partial class SlotCard : UserControl
                 CardBorder.Background      = new SolidColorBrush(connected ? ColorBgNormal : ColorBgEmpty);
                 Opacity = 1.0;
                 AnimateScale(1.0);
+                SetGlowShadow(0f, 0f);
                 break;
 
             case CardState.Focused:
                 CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderFocused);
-                CardBorder.BorderThickness = new Thickness(1);
+                CardBorder.BorderThickness = new Thickness(1.5);
                 CardBorder.Background      = new SolidColorBrush(ColorBgFocused);
                 Opacity = 1.0;
                 AnimateScale(1.03);
+                SetGlowShadow(8f, connected ? 0.8f : 0.4f);
                 break;
 
             case CardState.Selected:
                 CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderFocused);
-                CardBorder.BorderThickness = new Thickness(3);
+                CardBorder.BorderThickness = new Thickness(2);
                 CardBorder.Background      = new SolidColorBrush(ColorBgSelected);
                 Opacity = 1.0;
                 AnimateScale(1.03);
+                SetGlowShadow(12f, 1.0f);
                 break;
 
             case CardState.Dimmed:
@@ -171,6 +174,7 @@ public sealed partial class SlotCard : UserControl
                 CardBorder.Background      = new SolidColorBrush(connected ? ColorBgNormal : ColorBgEmpty);
                 Opacity = 0.5;
                 AnimateScale(1.0);
+                SetGlowShadow(0f, 0f);
                 break;
         }
     }
@@ -208,6 +212,52 @@ public sealed partial class SlotCard : UserControl
 
         visual.StartAnimation("Scale.X", anim);
         visual.StartAnimation("Scale.Y", anim);
+    }
+
+    // ── Glow shadow ───────────────────────────────────────────────────────────
+
+    // SpriteVisual is set as the "element child visual" of this UserControl — it sits
+    // behind CardBorder but inside the UserControl, with a transparent brush so only
+    // its DropShadow is visible.  The shadow bleeds outward into the 8px horizontal
+    // margin, producing the white aura without being clipped by CardBorder's clip rect.
+    private SpriteVisual? _glowVisual;
+
+    /// <summary>
+    /// Apply or remove a white DropShadow glow on this card.
+    /// blurRadius=0 / opacity=0 removes the shadow entirely.
+    /// </summary>
+    private void SetGlowShadow(float blurRadius, float opacity)
+    {
+        if (!IsLoaded) return;
+
+        var compositor = ElementCompositionPreview.GetElementVisual(this).Compositor;
+
+        if (blurRadius <= 0f || opacity <= 0f)
+        {
+            ElementCompositionPreview.SetElementChildVisual(this, null);
+            _glowVisual = null;
+            return;
+        }
+
+        // Reuse the SpriteVisual across calls; recreate only when needed.
+        if (_glowVisual is null)
+        {
+            _glowVisual       = compositor.CreateSpriteVisual();
+            _glowVisual.Brush = compositor.CreateColorBrush(Color.FromArgb(0, 0, 0, 0));
+        }
+
+        _glowVisual.Size = new Vector2((float)ActualWidth, (float)ActualHeight);
+
+        var shadow        = compositor.CreateDropShadow();
+        shadow.BlurRadius = blurRadius;
+        shadow.Color      = Color.FromArgb(255, 255, 255, 255); // white
+        shadow.Opacity    = opacity;
+        shadow.Offset     = Vector3.Zero;                       // centered glow, not directional
+        _glowVisual.Shadow = shadow;
+
+        // SetElementChildVisual renders the sprite BEHIND CardBorder (above UserControl's
+        // own rendering, which is nothing, and below its XAML children).
+        ElementCompositionPreview.SetElementChildVisual(this, _glowVisual);
     }
 
     // ── Hold-to-reorder progress bar ──────────────────────────────────────────

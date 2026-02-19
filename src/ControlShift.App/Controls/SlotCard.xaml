@@ -5,7 +5,7 @@
     Tapped="SlotCard_Tapped">
 
     <Border x:Name="CardBorder"
-            Background="#222222"
+            Background="#D9222222"
             BorderBrush="#303030"
             BorderThickness="1" CornerRadius="12"
             Padding="16,14" MinHeight="80">
