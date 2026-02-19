@@ -1,0 +1,173 @@
+<Window
+    x:Class="ControlShift.App.SplashWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid x:Name="RootGrid" RequestedTheme="Dark" Background="#FF1A1A1A">
+
+        <!-- Main content: vertically and horizontally centered -->
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Spacing="16">
+
+            <!-- Green arc ring (270-degree arc that spins) -->
+            <Canvas Width="80" Height="80" HorizontalAlignment="Center">
+                <Path x:Name="GreenArc"
+                      Stroke="#FF107C10" StrokeThickness="3"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      Opacity="0"
+                      Canvas.Left="4" Canvas.Top="4">
+                    <Path.Data>
+                        <PathGeometry>
+                            <PathFigure StartPoint="36,0" IsClosed="False">
+                                <ArcSegment
+                                    Point="0,36"
+                                    Size="36,36"
+                                    SweepDirection="Clockwise"
+                                    IsLargeArc="True" />
+                            </PathFigure>
+                        </PathGeometry>
+                    </Path.Data>
+                    <Path.RenderTransform>
+                        <RotateTransform x:Name="ArcRotation"
+                                         CenterX="36" CenterY="36" Angle="0" />
+                    </Path.RenderTransform>
+                </Path>
+            </Canvas>
+
+            <!-- App title -->
+            <TextBlock x:Name="TitleText"
+                       Text="ControlShift"
+                       FontSize="32" FontWeight="Bold"
+                       Foreground="White"
+                       HorizontalAlignment="Center"
+                       Opacity="0" />
+
+            <!-- Green underline bar (uses ScaleTransform for reliable animation) -->
+            <Border x:Name="GreenUnderline"
+                    Background="#FF107C10"
+                    Height="3" CornerRadius="1.5"
+                    Width="200"
+                    HorizontalAlignment="Center"
+                    RenderTransformOrigin="0.5,0.5"
+                    Margin="0,-8,0,0">
+                <Border.RenderTransform>
+                    <ScaleTransform x:Name="UnderlineScale" ScaleX="0" ScaleY="1" />
+                </Border.RenderTransform>
+            </Border>
+
+            <!-- Version text -->
+            <TextBlock x:Name="VersionText"
+                       Text="v0.1"
+                       FontSize="12"
+                       Foreground="#9E9E9E"
+                       HorizontalAlignment="Center"
+                       Opacity="0"
+                       Margin="0,-4,0,0" />
+        </StackPanel>
+
+        <!-- Animation storyboard -->
+        <Grid.Resources>
+            <Storyboard x:Name="SplashAnimation">
+
+                <!-- Phase 1: Green arc fades in (0-400ms) -->
+                <DoubleAnimation
+                    Storyboard.TargetName="GreenArc"
+                    Storyboard.TargetProperty="Opacity"
+                    From="0" To="1"
+                    Duration="0:0:0.4"
+                    BeginTime="0:0:0">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseOut" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+
+                <!-- Phase 1: Arc spins 360 degrees (100-1300ms) -->
+                <DoubleAnimation
+                    Storyboard.TargetName="ArcRotation"
+                    Storyboard.TargetProperty="Angle"
+                    From="0" To="360"
+                    Duration="0:0:1.2"
+                    BeginTime="0:0:0.1">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseInOut" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+
+                <!-- Phase 2: Title fades in (600-1100ms) -->
+                <DoubleAnimation
+                    Storyboard.TargetName="TitleText"
+                    Storyboard.TargetProperty="Opacity"
+                    From="0" To="1"
+                    Duration="0:0:0.5"
+                    BeginTime="0:0:0.6">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseOut" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+
+                <!-- Phase 3: Green underline extends (900-1500ms) -->
+                <DoubleAnimation
+                    Storyboard.TargetName="UnderlineScale"
+                    Storyboard.TargetProperty="ScaleX"
+                    From="0" To="1"
+                    Duration="0:0:0.6"
+                    BeginTime="0:0:0.9">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseOut" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+
+                <!-- Phase 4: Version text fades in (1300-1700ms) -->
+                <DoubleAnimation
+                    Storyboard.TargetName="VersionText"
+                    Storyboard.TargetProperty="Opacity"
+                    From="0" To="1"
+                    Duration="0:0:0.4"
+                    BeginTime="0:0:1.3">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseOut" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+
+                <!-- Phase 5: Everything fades out (2000-2500ms) -->
+                <DoubleAnimation
+                    Storyboard.TargetName="GreenArc"
+                    Storyboard.TargetProperty="Opacity"
+                    To="0" Duration="0:0:0.5"
+                    BeginTime="0:0:2.0">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseIn" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+                <DoubleAnimation
+                    Storyboard.TargetName="TitleText"
+                    Storyboard.TargetProperty="Opacity"
+                    To="0" Duration="0:0:0.5"
+                    BeginTime="0:0:2.0">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseIn" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+                <DoubleAnimation
+                    Storyboard.TargetName="GreenUnderline"
+                    Storyboard.TargetProperty="Opacity"
+                    To="0" Duration="0:0:0.5"
+                    BeginTime="0:0:2.0">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseIn" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+                <DoubleAnimation
+                    Storyboard.TargetName="VersionText"
+                    Storyboard.TargetProperty="Opacity"
+                    To="0" Duration="0:0:0.5"
+                    BeginTime="0:0:2.0">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseIn" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+
+            </Storyboard>
+        </Grid.Resources>
+    </Grid>
+</Window>

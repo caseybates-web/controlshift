@@ -17,11 +17,17 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # Only build Core + Tests with dotnet CLI.
+      # The WinUI 3 App requires MSBuild and is handled by ci.yml (build-app job).
       - name: Restore
-        run: dotnet restore
+        run: |
+          dotnet restore src/ControlShift.Core/ControlShift.Core.csproj
+          dotnet restore tests/ControlShift.Core.Tests/ControlShift.Core.Tests.csproj
 
       - name: Build
-        run: dotnet build --no-restore --configuration Release
+        run: |
+          dotnet build src/ControlShift.Core/ControlShift.Core.csproj --no-restore --configuration Release
+          dotnet build tests/ControlShift.Core.Tests/ControlShift.Core.Tests.csproj --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal
+        run: dotnet test tests/ControlShift.Core.Tests/ControlShift.Core.Tests.csproj --no-build --configuration Release --verbosity normal

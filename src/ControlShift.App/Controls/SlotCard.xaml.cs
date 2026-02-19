@@ -78,7 +78,7 @@ public sealed partial class SlotCard : UserControl
         else
         {
             BatterySection.Visibility = Visibility.Visible;
-            BatteryIcon.Text = _slot.BatteryText.EndsWith('%') ? "\uEBA7" : "\uE83E";
+            BatteryIcon.Text = _slot.BatteryGlyph;
             BatteryText.Text = _slot.BatteryText;
         }
     }

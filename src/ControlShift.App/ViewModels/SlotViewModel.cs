@@ -79,6 +79,7 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         {
             Set(ref _batteryText, value);
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryGlyph)));
         }
     }
 
@@ -101,6 +102,22 @@ public sealed class SlotViewModel : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VidPidVisibility)));
         }
     }
+
+    // ── Derived display ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Maps BatteryText (a percentage string like "85%") to a Segoe Fluent Icons glyph.
+    /// </summary>
+    public string BatteryGlyph => BatteryText switch
+    {
+        "" => "",
+        var t when t.EndsWith('%') && int.TryParse(t.TrimEnd('%'), out var pct) =>
+            pct >= 75 ? "\xEBAA" :   // BatteryFull
+            pct >= 40 ? "\xEBA6" :   // BatteryHalf
+            pct >= 10 ? "\xEBA2" :   // BatteryLow
+                        "\xEBA0",    // BatteryEmpty
+        _ => "\xEBD4"               // PlugConnected (no percentage = wired)
+    };
 
     // ── Derived visibility ────────────────────────────────────────────────────
 
