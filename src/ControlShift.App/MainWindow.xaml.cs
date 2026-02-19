@@ -51,9 +51,7 @@ public sealed partial class MainWindow : Window
         string dbPath      = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
         string vendorsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-vendors.json");
 
-        // DECISION: Both databases fall back to empty lists if their JSON files are missing
-        // (e.g. first run from a non-published build directory). Enumeration still works;
-        // only the INTEGRATED badge and brand labels are suppressed.
+        // DECISION: Both databases fall back to empty lists if their JSON files are missing.
         IDeviceFingerprinter fingerprinter;
         IVendorDatabase      vendorDb;
 
@@ -75,15 +73,10 @@ public sealed partial class MainWindow : Window
             SlotPanel.Children.Add(_cards[i]);
         }
 
-        // Set up XYFocus links and tab order (top-to-bottom).
-        UpdateXYFocusLinks();
-        for (int i = 0; i < 4; i++)
-        {
-            _cards[i].TabIndex = i;
-            int idx = i; // capture for closure
-            _cards[i].GotFocus  += (_, _) => OnCardGotFocus(idx);
-            _cards[i].LostFocus += (_, _) => OnCardLostFocus(idx);
-        }
+        // Defer XYFocus links, TabIndex, and focus event wiring to ContentGrid.Loaded.
+        // Setting XYFocusUp/Down or TabIndex before the window compositor is ready
+        // (before the first layout pass) triggers STATUS_ASSERTION_FAILURE in WinUI 3.
+        ContentGrid.Loaded += OnContentGridLoaded;
 
         // Poll for device changes every 5 seconds.
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
@@ -95,7 +88,7 @@ public sealed partial class MainWindow : Window
         _navTimer.Tick += NavTimer_Tick;
         _navTimer.Start();
 
-        // Track window focus so we don't process gamepad nav when another app is foreground.
+        // Gate XInput polling on window focus so we don't steal input from other apps.
         Activated += (_, args) =>
             _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
 
@@ -103,6 +96,27 @@ public sealed partial class MainWindow : Window
 
         // Initial scan on window open.
         _ = RefreshAsync();
+    }
+
+    // ── Navigation: deferred setup ────────────────────────────────────────────
+
+    /// <summary>
+    /// Fires once when ContentGrid completes its first layout pass.
+    /// XYFocusUp/Down and TabIndex must not be set before this — doing so before the
+    /// compositor tree is ready causes STATUS_ASSERTION_FAILURE (0xc000027b) in WinUI 3.
+    /// </summary>
+    private void OnContentGridLoaded(object sender, RoutedEventArgs e)
+    {
+        ContentGrid.Loaded -= OnContentGridLoaded;
+
+        UpdateXYFocusLinks();
+        for (int i = 0; i < 4; i++)
+        {
+            _cards[i].TabIndex = i;
+            int idx = i; // capture for closure
+            _cards[i].GotFocus  += (_, _) => OnCardGotFocus(idx);
+            _cards[i].LostFocus += (_, _) => OnCardLostFocus(idx);
+        }
     }
 
     // ── Refresh ───────────────────────────────────────────────────────────────
@@ -140,7 +154,7 @@ public sealed partial class MainWindow : Window
         if (!_windowActive) return;
 
         // Aggregate button state across all four slots — any connected controller can navigate.
-        GamepadButtons current = default;
+        GamepadButtons current  = default;
         short          maxThumbY = 0;
 
         for (uint i = 0; i < 4; i++)
@@ -181,8 +195,8 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            // Normal mode: D-pad/stick moves focus between cards; A enters reorder mode.
-            // (WinUI 3 XYFocus also handles D-pad natively — polling catches A/B which don't auto-route.)
+            // Normal mode: D-pad/stick moves focus; A enters reorder mode.
+            // (WinUI 3 XYFocus also handles D-pad natively — polling catches A/B.)
             if (navUp   && _focusedCardIndex > 0)
                 _cards[_focusedCardIndex - 1].Focus(FocusState.Programmatic);
             if (navDown && _focusedCardIndex >= 0 && _focusedCardIndex < _cards.Length - 1)
@@ -203,7 +217,7 @@ public sealed partial class MainWindow : Window
     {
         if (_reorderingIndex >= 0)
         {
-            // Reorder mode: intercept arrow keys so they move the card instead of WinUI focus.
+            // Reorder mode: intercept arrow keys so they move the card.
             switch (e.Key)
             {
                 case VirtualKey.Up:
@@ -233,7 +247,6 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            // Normal mode: only Enter/Space/GamepadA start reorder; Escape is a no-op.
             switch (e.Key)
             {
                 case VirtualKey.Enter:
@@ -288,7 +301,7 @@ public sealed partial class MainWindow : Window
     {
         if (_reorderingIndex < 0) return;
 
-        // Restore the original visual order by rebuilding SlotPanel from the saved snapshot.
+        // Restore the original visual order from the saved snapshot.
         SlotPanel.Children.Clear();
         Array.Copy(_savedOrder, _cards, _cards.Length);
         foreach (var card in _cards)
@@ -296,7 +309,6 @@ public sealed partial class MainWindow : Window
 
         UpdateXYFocusLinks();
 
-        // Keep focus on whichever card was selected when reorder started.
         _focusedCardIndex = _reorderingIndex;
         _reorderingIndex  = -1;
 
@@ -318,7 +330,7 @@ public sealed partial class MainWindow : Window
         // Swap in array.
         (_cards[_reorderingIndex], _cards[newIdx]) = (_cards[newIdx], _cards[_reorderingIndex]);
 
-        // Update tab order and XYFocus to match new visual order.
+        // Rebuild tab order and XYFocus to match new visual order.
         for (int i = 0; i < _cards.Length; i++)
             _cards[i].TabIndex = i;
         UpdateXYFocusLinks();
@@ -350,17 +362,13 @@ public sealed partial class MainWindow : Window
     {
         for (int i = 0; i < _cards.Length; i++)
         {
-            _cards[i].XYFocusUp   = i > 0               ? _cards[i - 1] : null;
-            _cards[i].XYFocusDown = i < _cards.Length-1  ? _cards[i + 1] : null;
+            _cards[i].XYFocusUp   = i > 0                ? _cards[i - 1] : null;
+            _cards[i].XYFocusDown = i < _cards.Length - 1 ? _cards[i + 1] : null;
         }
     }
 
     // ── Window sizing ─────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Resizes the window to the given logical pixel dimensions, scaled for the
-    /// current display DPI. AppWindow.Resize takes physical pixels.
-    /// </summary>
     private void SetWindowSize(int logicalWidth, int logicalHeight)
     {
         var hwnd  = WinRT.Interop.WindowNative.GetWindowHandle(this);

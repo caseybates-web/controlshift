@@ -47,6 +47,17 @@ public sealed partial class SlotCard : UserControl
     public SlotCard()
     {
         this.InitializeComponent();
+        // Defer IsTabStop and UseSystemFocusVisuals until after the element is
+        // in the visual tree. Setting them during construction (before Loaded)
+        // can trigger STATUS_ASSERTION_FAILURE (0xc000027b) in WinUI 3.
+        this.Loaded += OnLoaded;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        this.Loaded -= OnLoaded;
+        this.IsTabStop             = true;
+        this.UseSystemFocusVisuals = false;
     }
 
     // ── Slot data ─────────────────────────────────────────────────────────────
