@@ -5,7 +5,7 @@
     Title="ControlShift">
 
     <Grid x:Name="ContentGrid"
-          Background="Transparent"
+          Background="{StaticResource XbBackgroundBrush}"
           KeyDown="ContentGrid_KeyDown">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

@@ -4,18 +4,39 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Tapped="SlotCard_Tapped">
 
-    <!-- Outer grid holds both the content card and the focus-ring overlay.
-         Grid has no clip so the DropShadow on GlowBorder can bleed into the margin. -->
+    <UserControl.Resources>
+        <!-- Jiggle storyboard: fires on tap-A (rumble only, not hold-A reorder).
+             Quick 200ms left-right shake using a named TranslateTransform. -->
+        <Storyboard x:Name="JiggleStoryboard">
+            <DoubleAnimationUsingKeyFrames
+                Storyboard.TargetName="JiggleTransform"
+                Storyboard.TargetProperty="X">
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0"      Value="4"  />
+                <LinearDoubleKeyFrame   KeyTime="0:0:0.05"   Value="-4" />
+                <LinearDoubleKeyFrame   KeyTime="0:0:0.1"    Value="3"  />
+                <LinearDoubleKeyFrame   KeyTime="0:0:0.15"   Value="-3" />
+                <LinearDoubleKeyFrame   KeyTime="0:0:0.2"    Value="0"  />
+            </DoubleAnimationUsingKeyFrames>
+        </Storyboard>
+    </UserControl.Resources>
+
+    <!-- TranslateTransform targeted by JiggleStoryboard. -->
+    <UserControl.RenderTransform>
+        <TranslateTransform x:Name="JiggleTransform" X="0" Y="0" />
+    </UserControl.RenderTransform>
+
+    <!-- Outer grid: no clip, so glow borders with negative margins can bleed
+         into the 8px horizontal margin the parent SlotPanel sets on each card. -->
     <Grid>
 
-        <!-- Content card — always below GlowBorder in z-order -->
+        <!-- Content card: solid #2D2D2D, border and background never change in code. -->
         <Border x:Name="CardBorder"
-                Background="#D9222222"
+                Background="#2D2D2D"
                 BorderBrush="#303030"
                 BorderThickness="1" CornerRadius="12"
                 Padding="16,14" MinHeight="80">
 
-            <!-- Two-row grid: main content + hold-to-reorder progress bar -->
+            <!-- Two-row grid: main content row + hold-to-reorder progress bar -->
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
@@ -103,8 +124,7 @@
                 </Grid>
 
                 <!-- Row 1: hold-to-reorder progress bar.
-                     Fills green over 500ms while A is held.
-                     Collapsed until a hold begins; hidden immediately on tap or reorder entry. -->
+                     Fills green over 500ms while A is held. -->
                 <ProgressBar x:Name="HoldProgressBar" Grid.Row="1"
                              Minimum="0" Maximum="1" Value="0"
                              Height="3" Margin="0,10,0,0"
@@ -115,19 +135,29 @@
             </Grid>
         </Border>
 
-        <!-- Focus ring overlay: same CornerRadius as CardBorder, transparent fill so
-             card content shows through, white stroke controlled in code.
-             Sits in front of CardBorder (later in z-order).  IsHitTestVisible=False
-             so taps pass through to CardBorder → SlotCard_Tapped.
-             A SpriteVisual+DropShadow attached via SetElementChildVisual provides the
-             soft glow that radiates outward into the 8px margin. -->
-        <Border x:Name="GlowBorder"
-                Background="Transparent"
-                CornerRadius="12"
-                BorderBrush="Transparent"
-                BorderThickness="2"
-                IsHitTestVisible="False"
-                Visibility="Collapsed" />
+        <!-- Layered white glow rings — all Collapsed in Normal / Dimmed state.
+             Negative margins extend each ring beyond the Grid into the card's margin
+             so the glow follows the rounded corners without any Composition API.
+             IsHitTestVisible=False lets taps fall through to CardBorder. -->
+
+        <!-- Outer ring: faintest, extends 4px outside the card edge. -->
+        <Border x:Name="GlowOuter"
+                Background="Transparent" CornerRadius="14"
+                BorderBrush="White" BorderThickness="1" Opacity="0.2"
+                Margin="-4" IsHitTestVisible="False" Visibility="Collapsed" />
+
+        <!-- Middle ring: medium brightness, extends 2px outside the card edge. -->
+        <Border x:Name="GlowMiddle"
+                Background="Transparent" CornerRadius="13"
+                BorderBrush="White" BorderThickness="1" Opacity="0.4"
+                Margin="-2" IsHitTestVisible="False" Visibility="Collapsed" />
+
+        <!-- Inner ring: brightest, flush with the card edge.
+             BorderThickness set to 2 (Focused) or 3 (Selected) in code. -->
+        <Border x:Name="GlowInner"
+                Background="Transparent" CornerRadius="12"
+                BorderBrush="White" BorderThickness="2" Opacity="0.9"
+                Margin="0" IsHitTestVisible="False" Visibility="Collapsed" />
 
     </Grid>
 </UserControl>

@@ -1,10 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
 using Vortice.XInput;
 using Windows.Graphics;
 using Windows.System;
@@ -71,13 +69,6 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
-        // SystemBackdrop must be set BEFORE InitializeComponent() so the compositor
-        // allocates the backdrop surface before the window is first shown.
-        if (MicaController.IsSupported())
-            this.SystemBackdrop = new MicaBackdrop();
-        else if (DesktopAcrylicController.IsSupported())
-            this.SystemBackdrop = new DesktopAcrylicBackdrop();
-
         InitializeComponent();
 
         NavLog($"MainWindow ctor — log: {NavLogPath}");

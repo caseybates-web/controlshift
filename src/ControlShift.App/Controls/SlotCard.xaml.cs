@@ -34,12 +34,7 @@ public sealed partial class SlotCard : UserControl
 {
     // ── Card state colors ─────────────────────────────────────────────────────
 
-    private static readonly Color ColorBorderNormal   = Color.FromArgb(255,  48,  48,  48); // #303030
-    private static readonly Color ColorBorderFocused  = Color.FromArgb(255, 255, 255, 255); // white glow ring
-    private static readonly Color ColorBgEmpty        = Color.FromArgb(217,  34,  34,  34); // #D9222222 ~85%
-    private static readonly Color ColorBgNormal       = Color.FromArgb(217,  45,  45,  45); // ~85% opacity
-    private static readonly Color ColorBgFocused      = Color.FromArgb(217,  56,  56,  56); // ~85% opacity
-    private static readonly Color ColorBgSelected     = Color.FromArgb(217,  64,  64,  64); // ~85% opacity
+    // Only the player badge changes color; CardBorder background/border stay fixed in XAML.
     private static readonly Color ColorBadgeEmpty     = Color.FromArgb(255,  85,  85,  85); // #555555
     private static readonly Color ColorBadgeConnected = Color.FromArgb(255,  16, 124,  16); // #107C10
 
@@ -137,41 +132,33 @@ public sealed partial class SlotCard : UserControl
 
     private void ApplyCardState()
     {
-        bool connected = _slot?.IsConnected ?? false;
-
-        // CardBorder always carries only the subtle dark border.
-        // GlowBorder (in front of CardBorder) provides the white focus ring + glow.
-        CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderNormal);
-        CardBorder.BorderThickness = new Thickness(1);
-
+        // CardBorder background (#2D2D2D), border (#303030), and thickness (1px) are
+        // fixed in XAML and never changed here. Only Opacity, scale, and the three
+        // glow-ring borders are controlled in code.
         switch (_currentState)
         {
             case CardState.Normal:
-                CardBorder.Background = new SolidColorBrush(connected ? ColorBgNormal : ColorBgEmpty);
                 Opacity = 1.0;
                 AnimateScale(1.0);
-                HideGlow();
+                HideGlowRings();
                 break;
 
             case CardState.Focused:
-                CardBorder.Background = new SolidColorBrush(ColorBgFocused);
                 Opacity = 1.0;
                 AnimateScale(1.03);
-                ShowGlow(2f, 8f, 0.75f);
+                ShowGlowRings(innerThickness: 2);
                 break;
 
             case CardState.Selected:
-                CardBorder.Background = new SolidColorBrush(ColorBgSelected);
                 Opacity = 1.0;
                 AnimateScale(1.03);
-                ShowGlow(2.5f, 12f, 1.0f);
+                ShowGlowRings(innerThickness: 3);
                 break;
 
             case CardState.Dimmed:
-                CardBorder.Background = new SolidColorBrush(connected ? ColorBgNormal : ColorBgEmpty);
                 Opacity = 0.5;
                 AnimateScale(1.0);
-                HideGlow();
+                HideGlowRings();
                 break;
         }
     }
@@ -211,56 +198,26 @@ public sealed partial class SlotCard : UserControl
         visual.StartAnimation("Scale.Y", anim);
     }
 
-    // ── Glow ring ─────────────────────────────────────────────────────────────
+    // ── Glow rings (pure XAML) ────────────────────────────────────────────────
 
-    // GlowBorder (declared in XAML after CardBorder, so rendered on top) carries the
-    // white stroke ring and a SpriteVisual DropShadow via SetElementChildVisual.
-    // Because GlowBorder sits in FRONT of CardBorder, the shadow radiates outward into
-    // the 8px margin rather than bleeding across the card's interior.
-    private SpriteVisual? _glowVisual;
+    // Three nested Border elements (GlowOuter, GlowMiddle, GlowInner) declared in XAML
+    // with negative margins so they extend beyond CardBorder into the 8px margin.
+    // Each has IsHitTestVisible=False and a white BorderBrush at varying opacity,
+    // creating a stepped glow that follows CornerRadius without any Composition API.
 
-    private void HideGlow()
+    private void HideGlowRings()
     {
-        GlowBorder.Visibility = Visibility.Collapsed;
-        ElementCompositionPreview.SetElementChildVisual(GlowBorder, null);
-        _glowVisual = null;
+        GlowOuter.Visibility  = Visibility.Collapsed;
+        GlowMiddle.Visibility = Visibility.Collapsed;
+        GlowInner.Visibility  = Visibility.Collapsed;
     }
 
-    /// <summary>
-    /// Show GlowBorder with a white stroke ring and a DropShadow blur glow.
-    /// strokeThickness: width of the visible white ring (px).
-    /// blurRadius / shadowOpacity: parameters for the Composition DropShadow.
-    /// </summary>
-    private void ShowGlow(float strokeThickness, float blurRadius, float shadowOpacity)
+    private void ShowGlowRings(double innerThickness)
     {
-        if (!IsLoaded || ActualWidth == 0) return;
-
-        GlowBorder.Visibility      = Visibility.Visible;
-        GlowBorder.BorderBrush     = new SolidColorBrush(ColorBorderFocused);
-        GlowBorder.BorderThickness = new Thickness(strokeThickness);
-
-        var compositor = ElementCompositionPreview.GetElementVisual(GlowBorder).Compositor;
-
-        // Reuse SpriteVisual across state transitions.
-        if (_glowVisual is null)
-        {
-            _glowVisual       = compositor.CreateSpriteVisual();
-            _glowVisual.Brush = compositor.CreateColorBrush(Color.FromArgb(0, 0, 0, 0));
-        }
-
-        // Size matches the UserControl so the glow extends uniformly from all edges.
-        _glowVisual.Size = new Vector2((float)ActualWidth, (float)ActualHeight);
-
-        var shadow        = compositor.CreateDropShadow();
-        shadow.BlurRadius = blurRadius;
-        shadow.Color      = Color.FromArgb(255, 255, 255, 255); // white
-        shadow.Opacity    = shadowOpacity;
-        shadow.Offset     = Vector3.Zero;                       // symmetric glow, not directional
-        _glowVisual.Shadow = shadow;
-
-        // Attach to GlowBorder (which is in front of CardBorder) so the shadow
-        // radiates outward into the margin rather than spreading across the card surface.
-        ElementCompositionPreview.SetElementChildVisual(GlowBorder, _glowVisual);
+        GlowOuter.Visibility      = Visibility.Visible;
+        GlowMiddle.Visibility     = Visibility.Visible;
+        GlowInner.Visibility      = Visibility.Visible;
+        GlowInner.BorderThickness = new Thickness(innerThickness);
     }
 
     // ── Hold-to-reorder progress bar ──────────────────────────────────────────
@@ -301,10 +258,8 @@ public sealed partial class SlotCard : UserControl
             // 16383 ≈ 25% of ushort.MaxValue (65535) — enough to feel without startling.
             XInput.SetVibration((uint)_slot.SlotIndex, 16383, 16383);
 
-            // Flash the glow ring while rumbling; restore to current card state when done.
-            GlowBorder.Visibility      = Visibility.Visible;
-            GlowBorder.BorderBrush     = new SolidColorBrush(ColorBorderFocused);
-            GlowBorder.BorderThickness = new Thickness(2);
+            // Play the jiggle animation concurrently with the 200ms rumble.
+            JiggleStoryboard.Begin();
 
             await Task.Delay(200);
 
