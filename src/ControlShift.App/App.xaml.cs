@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.Extensions.DependencyInjection;
+using ControlShift.App.Services;
+using ControlShift.App.ViewModels;
 using ControlShift.Core.Enumeration;
 using ControlShift.Core.Devices;
 using Serilog;
@@ -40,27 +42,10 @@ public partial class App : Application
         ConfigureServices(services);
         Services = services.BuildServiceProvider();
 
-        // Load known-devices database
+        // Load known-devices database (bundled to output via csproj Content item)
         var knownDb = Services.GetRequiredService<KnownDeviceDatabase>();
         var devicesJsonPath = Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
-
-        // DECISION: In development, known-devices.json lives alongside the solution root.
-        // In production builds, it should be bundled as a content file next to the exe.
-        // Try both paths for flexibility during development.
-        if (!File.Exists(devicesJsonPath))
-        {
-            devicesJsonPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
-                "devices", "known-devices.json");
-        }
-
-        if (File.Exists(devicesJsonPath))
-        {
-            knownDb.Load(devicesJsonPath);
-        }
-        else
-        {
-            Log.Warning("Could not find known-devices.json at expected paths");
-        }
+        knownDb.Load(devicesJsonPath);
 
         _mainWindow = new MainWindow();
         _mainWindow.Activate();
@@ -72,5 +57,7 @@ public partial class App : Application
         services.AddSingleton<IDeviceFingerprinter, DeviceFingerprinter>();
         services.AddTransient<IXInputEnumerator, XInputEnumerator>();
         services.AddTransient<IHidEnumerator, HidEnumerator>();
+        services.AddTransient<MainViewModel>();
+        services.AddSingleton<Func<Window, TrayIconService>>(_ => window => new TrayIconService(window));
     }
 }

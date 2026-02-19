@@ -114,10 +114,10 @@ public sealed class DeviceFingerprinter : IDeviceFingerprinter
         // DECISION: Battery type "Wired" indicates USB connection.
         // Wireless battery types (Alkaline, NiMH, Unknown) suggest Bluetooth.
         // This heuristic works for most consumer controllers.
-        return slot.BatteryType switch
+        return slot.BatteryType?.ToUpperInvariant() switch
         {
-            "Wired" => ConnectionType.Usb,
-            "Alkaline" or "NiMH" or "Unknown" => ConnectionType.Bluetooth,
+            "WIRED" => ConnectionType.Usb,
+            "ALKALINE" or "NIMH" or "UNKNOWN" => ConnectionType.Bluetooth,
             _ => ConnectionType.Unknown
         };
     }

@@ -78,4 +78,41 @@ public class XInputEnumeratorTests
         slots.Should().HaveCount(4);
         slots.Select(s => s.SlotIndex).Should().BeEquivalentTo(new[] { 0, 1, 2, 3 });
     }
+
+    [Theory]
+    [InlineData(Vortice.XInput.BatteryType.Wired, "Wired")]
+    [InlineData(Vortice.XInput.BatteryType.Alkaline, "Alkaline")]
+    [InlineData(Vortice.XInput.BatteryType.Nimh, "NiMH")]
+    [InlineData(Vortice.XInput.BatteryType.Unknown, "Unknown")]
+    [InlineData(Vortice.XInput.BatteryType.Disconnected, "Unknown")]
+    public void NormalizeBatteryType_ProducesCanonicalStrings(
+        Vortice.XInput.BatteryType input, string expected)
+    {
+        var result = XInputEnumerator.NormalizeBatteryType(input);
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void NormalizeBatteryType_NimhProducesUppercaseNiMH()
+    {
+        // This is the critical case: Vortice enum ToString() returns "Nimh"
+        // but we need "NiMH" to match the fingerprinter's connection type logic.
+        var result = XInputEnumerator.NormalizeBatteryType(Vortice.XInput.BatteryType.Nimh);
+        result.Should().Be("NiMH");
+        result.Should().NotBe("Nimh", "Vortice's default ToString() casing would break fingerprinting");
+    }
+
+    [Fact]
+    public void RealEnumerator_DisconnectedSlots_HaveNullBattery()
+    {
+        // On CI, all slots are disconnected — verify battery fields are null.
+        var enumerator = new XInputEnumerator();
+        var slots = enumerator.EnumerateSlots();
+
+        foreach (var slot in slots.Where(s => !s.IsConnected))
+        {
+            slot.BatteryType.Should().BeNull();
+            slot.BatteryLevel.Should().BeNull();
+        }
+    }
 }

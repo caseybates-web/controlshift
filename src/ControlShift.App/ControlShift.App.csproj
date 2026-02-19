@@ -19,8 +19,8 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.0" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.Primitives" Version="8.1.240916" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
-    <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
   </ItemGroup>
 
@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <Content Include="Assets\controlshift.ico" />
+    <Content Include="..\..\devices\known-devices.json" Link="devices\known-devices.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

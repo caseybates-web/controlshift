@@ -3,8 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using ControlShift.App.ViewModels;
 using ControlShift.App.Controls;
 using ControlShift.App.Services;
-using ControlShift.Core.Enumeration;
-using ControlShift.Core.Devices;
 using Serilog;
 
 namespace ControlShift.App;
@@ -23,10 +21,7 @@ public sealed partial class MainWindow : Window
     {
         this.InitializeComponent();
 
-        ViewModel = new MainViewModel(
-            App.Services.GetRequiredService<IXInputEnumerator>(),
-            App.Services.GetRequiredService<IHidEnumerator>(),
-            App.Services.GetRequiredService<IDeviceFingerprinter>());
+        ViewModel = App.Services.GetRequiredService<MainViewModel>();
 
         // Set window size to match PRD spec: 320x480
         SetWindowSize(320, 480);
@@ -37,9 +32,22 @@ public sealed partial class MainWindow : Window
         // Build the slot cards in the UI
         BuildSlotCards();
 
-        // Initial enumeration
-        ViewModel.RefreshControllers();
+        // Dispose tray icon on window close to prevent ghost icons
+        this.Closed += OnClosed;
+
+        // Initial enumeration (fire-and-forget; errors logged inside)
+        _ = InitialRefreshAsync();
+    }
+
+    private async Task InitialRefreshAsync()
+    {
+        await ViewModel.RefreshControllersAsync();
         UpdateSlotCards();
+    }
+
+    private void OnClosed(object sender, WindowEventArgs args)
+    {
+        _trayIconService?.Dispose();
     }
 
     private void SetWindowSize(int width, int height)
@@ -54,7 +62,8 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            _trayIconService = new TrayIconService(this);
+            var factory = App.Services.GetRequiredService<Func<Window, TrayIconService>>();
+            _trayIconService = factory(this);
             _trayIconService.Initialize();
         }
         catch (Exception ex)
@@ -91,9 +100,9 @@ public sealed partial class MainWindow : Window
             : "No controllers detected";
     }
 
-    private void RefreshButton_Click(object sender, RoutedEventArgs e)
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.RefreshControllers();
+        await ViewModel.RefreshControllersAsync();
         UpdateSlotCards();
         Logger.Information("Manual controller refresh triggered");
     }
