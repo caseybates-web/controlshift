@@ -8,7 +8,7 @@ using Serilog;
 namespace ControlShift.App;
 
 /// <summary>
-/// Main tray popup window — 320x480px dark-themed controller slot display.
+/// Main tray popup window — 340x480px Xbox-themed controller slot display.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
@@ -23,8 +23,8 @@ public sealed partial class MainWindow : Window
 
         ViewModel = App.Services.GetRequiredService<MainViewModel>();
 
-        // Set window size to match PRD spec: 320x480
-        SetWindowSize(320, 480);
+        // Set window size — slightly wider than original PRD for Xbox-style card spacing
+        SetWindowSize(340, 480);
 
         // Initialize tray icon
         InitializeTrayIcon();
