@@ -132,11 +132,18 @@ public sealed class SlotViewModel : INotifyPropertyChanged
                      ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : null)
                      ?? "Controller";
 
-        // Connection label: prefer HID-detected type; fall back to XInput's guess.
+        // Connection label.
+        // HID path detection covers most cases. XInput override: if the HID path doesn't
+        // contain a recognisable BT marker (detection returns Usb) but XInput's battery
+        // query confirms the device is wireless (Alkaline/NiMH battery type), trust XInput —
+        // the controller is definitely not USB-cabled. This covers Xbox Wireless Adapter and
+        // any BT path format that doesn't match our heuristics.
+        bool xinputWireless = mc.XInputConnectionType == XInputConnectionType.Wireless;
         ConnectionLabel = mc.HidConnectionType switch
         {
-            HidConnectionType.Bluetooth => "BT",
-            HidConnectionType.Usb       => "USB",
+            HidConnectionType.Bluetooth                             => "BT",
+            HidConnectionType.Usb when xinputWireless              => "BT",
+            HidConnectionType.Usb                                   => "USB",
             _                           => mc.XInputConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless",
         };
 

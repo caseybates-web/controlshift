@@ -468,7 +468,11 @@ public sealed partial class MainWindow : Window
         int confirmIdx = _reorderingIndex;
         NavLog($"[ConfirmReorder] card now at idx {confirmIdx}");
 
-        // Suppress focus events (same reason as CancelReorder).
+        // Rebuild XY focus links for the new card order before releasing focus suppression.
+        // MoveReorderingCard maintains them per-move, but an explicit rebuild here is cheap
+        // and ensures correctness even if the user confirmed without moving.
+        UpdateXYFocusLinks();
+
         _suppressFocusEvents = true;
         try
         {
@@ -484,6 +488,16 @@ public sealed partial class MainWindow : Window
         finally
         {
             _suppressFocusEvents = false;
+        }
+
+        // Re-assert after suppress ends: deferred LostFocus events queued by earlier
+        // Children.RemoveAt calls inside MoveReorderingCard can fire here and set
+        // _focusedCardIndex = -1, permanently killing d-pad/thumbstick navigation.
+        if (_focusedCardIndex != confirmIdx)
+        {
+            NavLog($"[ConfirmReorder] *** focus drift {_focusedCardIndex}→{confirmIdx} (deferred LostFocus) — correcting");
+            _focusedCardIndex = confirmIdx;
+            UpdateCardStates();
         }
 
         NavLog($"[ConfirmReorder] done — focusIdx={_focusedCardIndex}");
@@ -531,6 +545,14 @@ public sealed partial class MainWindow : Window
         finally
         {
             _suppressFocusEvents = false;
+        }
+
+        // Same deferred-LostFocus guard as ConfirmReorder.
+        if (_focusedCardIndex != restoreIdx)
+        {
+            NavLog($"[CancelReorder] *** focus drift {_focusedCardIndex}→{restoreIdx} (deferred LostFocus) — correcting");
+            _focusedCardIndex = restoreIdx;
+            UpdateCardStates();
         }
 
         NavLog($"[CancelReorder] done — focusIdx={_focusedCardIndex}");

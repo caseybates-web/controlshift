@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Vortice.XInput;
 
 namespace ControlShift.Core.Enumeration;
@@ -52,6 +53,10 @@ public sealed class XInputEnumerator : IXInputEnumerator
         // indicate no battery; Alkaline (2) and Nimh (3) indicate wireless.
         bool hasBattery = XInput.GetBatteryInformation(
             userIndex, BatteryDeviceType.Gamepad, out BatteryInformation battery);
+
+        Debug.WriteLine($"[XInput] Slot{slotIndex}: hasBattery={hasBattery} " +
+                        $"type={(int)battery.BatteryType}({battery.BatteryType}) " +
+                        $"level={(int)battery.BatteryLevel}({battery.BatteryLevel})");
 
         bool isWireless = hasBattery
             && battery.BatteryType != BatteryType.Wired
