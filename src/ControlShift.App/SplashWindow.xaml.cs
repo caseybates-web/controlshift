@@ -1,9 +1,9 @@
+using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Windows.Graphics;
 using WinRT.Interop;
-using static ControlShift.App.Tray.NativeMethods;
 
 namespace ControlShift.App;
 
@@ -83,8 +83,11 @@ public sealed partial class SplashWindow : Window
         // Signal the app that the splash is done.
         SplashCompleted?.Invoke();
 
-        // Defer close to the next dispatcher tick so the PopupWindow
+        // Defer close to the next dispatcher tick so the MainWindow
         // has time to fully register its HWND with WinUI.
         DispatcherQueue.GetForCurrentThread().TryEnqueue(() => Close());
     }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

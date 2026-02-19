@@ -1,0 +1,89 @@
+<UserControl
+    x:Class="ControlShift.App.Controls.SlotCard"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Tapped="SlotCard_Tapped">
+
+    <Border x:Name="CardBorder"
+            Background="{StaticResource XbCardBrush}"
+            BorderBrush="{StaticResource XbBorderBrush}"
+            BorderThickness="1" CornerRadius="4"
+            Padding="16,12" MinHeight="76">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Player index badge (P1, P2, P3, P4) -->
+            <Border Grid.Column="0"
+                    Background="{StaticResource XbAccentBrush}"
+                    CornerRadius="2" Padding="10,4"
+                    VerticalAlignment="Center" Margin="0,0,14,0">
+                <TextBlock x:Name="SlotBadge" Text="P1"
+                           FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"
+                           Foreground="{StaticResource XbTextBrush}" />
+            </Border>
+
+            <!-- Device info -->
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+
+                <!-- Controller name -->
+                <TextBlock x:Name="DeviceName" Text="Empty"
+                           FontFamily="Segoe UI" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{StaticResource XbTextBrush}"
+                           TextTrimming="CharacterEllipsis" />
+
+                <!-- Badges row: connection type, INTEGRATED, brand -->
+                <StackPanel Orientation="Horizontal" Spacing="6">
+
+                    <Border x:Name="ConnectionBadge"
+                            Background="#3A3A3A" CornerRadius="2"
+                            Padding="6,2" Visibility="Collapsed">
+                        <TextBlock x:Name="ConnectionText" Text=""
+                                   FontFamily="Segoe UI" FontSize="10"
+                                   Foreground="{StaticResource XbTextMutedBrush}" />
+                    </Border>
+
+                    <Border x:Name="IntegratedBadge"
+                            Background="#1D4B1D" CornerRadius="2"
+                            Padding="6,2" Visibility="Collapsed">
+                        <TextBlock Text="INTEGRATED"
+                                   FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{StaticResource XbAccentBrush}" />
+                    </Border>
+
+                    <Border x:Name="BrandBadge"
+                            Background="#3A3A3A" CornerRadius="2"
+                            Padding="6,2" Visibility="Collapsed">
+                        <TextBlock x:Name="BrandText" Text=""
+                                   FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{StaticResource XbTextMutedBrush}" />
+                    </Border>
+
+                </StackPanel>
+
+                <!-- VID:PID in small monospace text -->
+                <TextBlock x:Name="VidPidText" Text=""
+                           FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="10"
+                           Foreground="{StaticResource XbTextMutedBrush}"
+                           Visibility="Collapsed" />
+
+            </StackPanel>
+
+            <!-- Battery indicator -->
+            <StackPanel x:Name="BatterySection" Grid.Column="2"
+                        Orientation="Horizontal" VerticalAlignment="Center"
+                        Spacing="4" Visibility="Collapsed">
+                <TextBlock x:Name="BatteryIcon" Text=""
+                           FontFamily="Segoe Fluent Icons" FontSize="18"
+                           Foreground="{StaticResource XbTextMutedBrush}" />
+                <TextBlock x:Name="BatteryText" Text=""
+                           FontFamily="Segoe UI" FontSize="11"
+                           Foreground="{StaticResource XbTextMutedBrush}" />
+            </StackPanel>
+
+        </Grid>
+    </Border>
+</UserControl>

@@ -1,13 +1,14 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using ControlShift.Core.Devices;
+using ControlShift.Core.Enumeration;
 using Microsoft.UI.Xaml;
 
 namespace ControlShift.App.ViewModels;
 
 /// <summary>
 /// View model for a single XInput player slot card (P1–P4).
-/// Implements INotifyPropertyChanged so x:Bind Mode=OneWay updates work in Step 6
-/// when live enumeration data is wired in.
+/// Updated by <see cref="UpdateFrom(MatchedController)"/> after each enumeration poll.
 /// </summary>
 public sealed class SlotViewModel : INotifyPropertyChanged
 {
@@ -22,17 +23,20 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         }
     }
 
-    // ── Slot identity (fixed at construction) ─────────────────────────────────
+    // ── Slot identity ─────────────────────────────────────────────────────────
 
     public int    SlotIndex   { get; }
     public string PlayerLabel => $"P{SlotIndex + 1}";
 
-    // ── Live data (updated in Step 6) ─────────────────────────────────────────
+    // ── Live data ─────────────────────────────────────────────────────────────
 
-    private bool   _isConnected;
-    private string _deviceName       = "—";
-    private string _connectionLabel  = string.Empty;
-    private string _batteryText      = string.Empty;
+    private bool    _isConnected;
+    private bool    _isIntegrated;
+    private string  _deviceName      = "—";
+    private string  _connectionLabel = string.Empty;
+    private string  _batteryText     = string.Empty;
+    private string? _vendorBrand;
+    private string  _vidPid          = string.Empty;
 
     public bool IsConnected
     {
@@ -40,9 +44,19 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         set
         {
             Set(ref _isConnected, value);
-            // Derived visibility properties change whenever IsConnected changes.
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConnectionVisibility)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VidPidVisibility)));
+        }
+    }
+
+    public bool IsIntegrated
+    {
+        get => _isIntegrated;
+        set
+        {
+            Set(ref _isIntegrated, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IntegratedBadgeVisibility)));
         }
     }
 
@@ -69,35 +83,104 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         }
     }
 
-    // ── Derived display (consumed by x:Bind in XAML) ─────────────────────────
+    public string? VendorBrand
+    {
+        get => _vendorBrand;
+        set
+        {
+            Set(ref _vendorBrand, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BrandBadgeVisibility)));
+        }
+    }
+
+    public string VidPid
+    {
+        get => _vidPid;
+        set
+        {
+            Set(ref _vidPid, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VidPidVisibility)));
+        }
+    }
+
+    // ── Derived display ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Maps BatteryText to a Segoe Fluent Icons glyph for the battery indicator.
-    /// Full = &#xEBAA;, Medium = &#xEBA6;, Low = &#xEBA2;, Empty = &#xEBA0;, Wired = &#xEBD4;.
+    /// Maps BatteryText (a percentage string like "85%") to a Segoe Fluent Icons glyph.
     /// </summary>
     public string BatteryGlyph => BatteryText switch
     {
-        "Full"   => "\xEBAA",   // BatteryFull
-        "Medium" => "\xEBA6",   // BatteryHalf
-        "Low"    => "\xEBA2",   // BatteryLow
-        "Empty"  => "\xEBA0",   // BatteryEmpty
-        _        => "\xEBD4"    // PlugConnected (wired / unknown)
+        "" => "",
+        var t when t.EndsWith('%') && int.TryParse(t.TrimEnd('%'), out var pct) =>
+            pct >= 75 ? "\xEBAA" :   // BatteryFull
+            pct >= 40 ? "\xEBA6" :   // BatteryHalf
+            pct >= 10 ? "\xEBA2" :   // BatteryLow
+                        "\xEBA0",    // BatteryEmpty
+        _ => "\xEBD4"               // PlugConnected (no percentage = wired)
     };
 
-    // ── Derived visibility (consumed by x:Bind in XAML) ──────────────────────
+    // ── Derived visibility ────────────────────────────────────────────────────
 
-    /// <summary>Collapses the connection-type label when the slot is empty.</summary>
     public Visibility ConnectionVisibility =>
-        IsConnected ? Visibility.Visible : Visibility.Collapsed;
+        IsConnected && !string.IsNullOrEmpty(ConnectionLabel)
+            ? Visibility.Visible : Visibility.Collapsed;
 
-    /// <summary>Collapses the battery readout when the slot is empty or wired.</summary>
     public Visibility BatteryVisibility =>
         !string.IsNullOrEmpty(BatteryText) ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility IntegratedBadgeVisibility =>
+        IsIntegrated ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility BrandBadgeVisibility =>
+        !string.IsNullOrEmpty(VendorBrand) ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility VidPidVisibility =>
+        IsConnected && !string.IsNullOrEmpty(VidPid) ? Visibility.Visible : Visibility.Collapsed;
 
     // ── Construction ──────────────────────────────────────────────────────────
 
     public SlotViewModel(int slotIndex)
     {
         SlotIndex = slotIndex;
+    }
+
+    // ── Update ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates all live data from the matched controller result for this slot.
+    /// </summary>
+    public void UpdateFrom(MatchedController mc)
+    {
+        IsConnected  = mc.IsConnected;
+        IsIntegrated = mc.IsIntegratedGamepad;
+
+        if (!mc.IsConnected)
+        {
+            DeviceName      = "—";
+            ConnectionLabel = string.Empty;
+            BatteryText     = string.Empty;
+            VendorBrand     = null;
+            VidPid          = string.Empty;
+            return;
+        }
+
+        // Name priority: HID product string → known device name → VID:PID fallback.
+        DeviceName = mc.Hid?.ProductName?.Trim() is { Length: > 0 } name
+            ? name
+            : mc.KnownDeviceName
+              ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : "Controller");
+
+        // Connection label prefers the more specific HID detection over XInput's wired/wireless.
+        ConnectionLabel = mc.HidConnectionType switch
+        {
+            HidConnectionType.Bluetooth => "Bluetooth",
+            HidConnectionType.Usb       => "USB",
+            _                           => mc.XInputConnectionType == XInputConnectionType.Wireless
+                                               ? "Wireless" : "USB",
+        };
+
+        BatteryText = mc.BatteryPercent.HasValue ? $"{mc.BatteryPercent}%" : string.Empty;
+        VendorBrand = mc.VendorBrand;
+        VidPid      = mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : string.Empty;
     }
 }

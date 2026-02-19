@@ -1,0 +1,16 @@
+{
+  "vendors": [
+    { "vid": "045E", "brand": "Xbox" },
+    { "vid": "054C", "brand": "PlayStation" },
+    { "vid": "057E", "brand": "Nintendo" },
+    { "vid": "0B05", "brand": "ASUS" },
+    { "vid": "17EF", "brand": "Lenovo" },
+    { "vid": "28DE", "brand": "Valve" },
+    { "vid": "2810", "brand": "Ayaneo" },
+    { "vid": "2833", "brand": "GPD" },
+    { "vid": "0079", "brand": "DragonRise" },
+    { "vid": "0E6F", "brand": "PDP" },
+    { "vid": "24C6", "brand": "PowerA" },
+    { "vid": "1532", "brand": "Razer" }
+  ]
+}

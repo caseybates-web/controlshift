@@ -9,18 +9,20 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- ControlShift — minimal Xbox dark palette -->
-            <Color x:Key="CsBackground">#1A1A1A</Color>
-            <Color x:Key="CsSurface">#242424</Color>
-            <Color x:Key="CsAccent">#107C10</Color>
-            <Color x:Key="CsTextPrimary">#FFFFFF</Color>
-            <Color x:Key="CsTextSecondary">#9E9E9E</Color>
+            <!-- Xbox design tokens -->
+            <Color x:Key="XbBackground">#1A1A1A</Color>
+            <Color x:Key="XbCard">#2D2D2D</Color>
+            <Color x:Key="XbAccent">#107C10</Color>
+            <Color x:Key="XbText">#FFFFFF</Color>
+            <Color x:Key="XbTextMuted">#ABABAB</Color>
+            <Color x:Key="XbBorder">#404040</Color>
 
-            <SolidColorBrush x:Key="CsBackgroundBrush" Color="{StaticResource CsBackground}" />
-            <SolidColorBrush x:Key="CsSurfaceBrush" Color="{StaticResource CsSurface}" />
-            <SolidColorBrush x:Key="CsAccentBrush" Color="{StaticResource CsAccent}" />
-            <SolidColorBrush x:Key="CsTextPrimaryBrush" Color="{StaticResource CsTextPrimary}" />
-            <SolidColorBrush x:Key="CsTextSecondaryBrush" Color="{StaticResource CsTextSecondary}" />
+            <SolidColorBrush x:Key="XbBackgroundBrush" Color="{StaticResource XbBackground}" />
+            <SolidColorBrush x:Key="XbCardBrush"       Color="{StaticResource XbCard}" />
+            <SolidColorBrush x:Key="XbAccentBrush"     Color="{StaticResource XbAccent}" />
+            <SolidColorBrush x:Key="XbTextBrush"       Color="{StaticResource XbText}" />
+            <SolidColorBrush x:Key="XbTextMutedBrush"  Color="{StaticResource XbTextMuted}" />
+            <SolidColorBrush x:Key="XbBorderBrush"     Color="{StaticResource XbBorder}" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
