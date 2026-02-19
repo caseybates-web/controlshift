@@ -8,6 +8,7 @@ namespace ControlShift.App.ViewModels;
 
 /// <summary>
 /// View model for a single XInput player slot card (P1–P4).
+/// Updated by <see cref="UpdateFrom(MatchedController)"/> after each enumeration poll.
 /// </summary>
 public sealed class SlotViewModel : INotifyPropertyChanged
 {
@@ -29,11 +30,13 @@ public sealed class SlotViewModel : INotifyPropertyChanged
 
     // ── Live data ─────────────────────────────────────────────────────────────
 
-    private bool   _isConnected;
-    private bool   _isIntegrated;
-    private string _deviceName      = "—";
-    private string _connectionLabel = string.Empty;
-    private string _batteryText     = string.Empty;
+    private bool    _isConnected;
+    private bool    _isIntegrated;
+    private string  _deviceName      = "—";
+    private string  _connectionLabel = string.Empty;
+    private string  _batteryText     = string.Empty;
+    private string? _vendorBrand;
+    private string  _vidPid          = string.Empty;
 
     public bool IsConnected
     {
@@ -43,6 +46,7 @@ public sealed class SlotViewModel : INotifyPropertyChanged
             Set(ref _isConnected, value);
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConnectionVisibility)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BatteryVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VidPidVisibility)));
         }
     }
 
@@ -78,18 +82,43 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         }
     }
 
+    public string? VendorBrand
+    {
+        get => _vendorBrand;
+        set
+        {
+            Set(ref _vendorBrand, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BrandBadgeVisibility)));
+        }
+    }
+
+    public string VidPid
+    {
+        get => _vidPid;
+        set
+        {
+            Set(ref _vidPid, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(VidPidVisibility)));
+        }
+    }
+
     // ── Derived visibility ────────────────────────────────────────────────────
 
     public Visibility ConnectionVisibility =>
         IsConnected && !string.IsNullOrEmpty(ConnectionLabel)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+            ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility BatteryVisibility =>
         !string.IsNullOrEmpty(BatteryText) ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility IntegratedBadgeVisibility =>
         IsIntegrated ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility BrandBadgeVisibility =>
+        !string.IsNullOrEmpty(VendorBrand) ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility VidPidVisibility =>
+        IsConnected && !string.IsNullOrEmpty(VidPid) ? Visibility.Visible : Visibility.Collapsed;
 
     // ── Construction ──────────────────────────────────────────────────────────
 
@@ -101,29 +130,40 @@ public sealed class SlotViewModel : INotifyPropertyChanged
     // ── Update ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Updates all live data from a polled XInput slot and its fingerprinted HID match.
-    /// Pass null for <paramref name="integratedMatch"/> when no integrated device is detected.
+    /// Updates all live data from the matched controller result for this slot.
     /// </summary>
-    public void UpdateFrom(XInputSlotInfo slot, FingerprintedDevice? integratedMatch)
+    public void UpdateFrom(MatchedController mc)
     {
-        IsConnected  = slot.IsConnected;
-        IsIntegrated = integratedMatch?.IsIntegratedGamepad == true;
+        IsConnected  = mc.IsConnected;
+        IsIntegrated = mc.IsIntegratedGamepad;
 
-        if (!slot.IsConnected)
+        if (!mc.IsConnected)
         {
             DeviceName      = "—";
             ConnectionLabel = string.Empty;
             BatteryText     = string.Empty;
+            VendorBrand     = null;
+            VidPid          = string.Empty;
             return;
         }
 
-        DeviceName = integratedMatch?.KnownDeviceName
-                     ?? (IsIntegrated ? "Built-in Controller" : "Controller");
+        // Name priority: HID product string → known device name → VID:PID fallback.
+        DeviceName = mc.Hid?.ProductName?.Trim() is { Length: > 0 } name
+            ? name
+            : mc.KnownDeviceName
+              ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : "Controller");
 
-        ConnectionLabel = slot.ConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless";
+        // Connection label prefers the more specific HID detection over XInput's wired/wireless.
+        ConnectionLabel = mc.HidConnectionType switch
+        {
+            HidConnectionType.Bluetooth => "Bluetooth",
+            HidConnectionType.Usb       => "USB",
+            _                           => mc.XInputConnectionType == XInputConnectionType.Wireless
+                                               ? "Wireless" : "USB",
+        };
 
-        BatteryText = slot.BatteryPercent.HasValue
-            ? $"{slot.BatteryPercent}%"
-            : string.Empty;
+        BatteryText = mc.BatteryPercent.HasValue ? $"{mc.BatteryPercent}%" : string.Empty;
+        VendorBrand = mc.VendorBrand;
+        VidPid      = mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : string.Empty;
     }
 }
