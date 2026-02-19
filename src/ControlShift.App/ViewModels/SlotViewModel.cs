@@ -116,10 +116,21 @@ public sealed class SlotViewModel : INotifyPropertyChanged
             return;
         }
 
-        // Device name: HID product string → known-device name → VID:PID fallback.
-        DeviceName = mc.Hid?.ProductName
+        // Device name priority:
+        //   1. HID product string (non-empty — HidSharp returns null or "" for some BT devices)
+        //   2. Known-device name from devices database
+        //   3. Vendor brand + "Controller" (e.g. "Xbox Controller") when product string is missing
+        //   4. VID:PID hex fallback
+        //   5. "Controller" (last resort when HID match failed entirely)
+        string? productName = mc.Hid?.ProductName;
+        if (string.IsNullOrWhiteSpace(productName)) productName = null;
+
+        DeviceName = productName
                      ?? mc.KnownDeviceName
-                     ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : "Controller");
+                     ?? (!string.IsNullOrEmpty(mc.VendorBrand) && mc.Hid is not null
+                             ? $"{mc.VendorBrand} Controller" : null)
+                     ?? (mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : null)
+                     ?? "Controller";
 
         // Connection label: prefer HID-detected type; fall back to XInput's guess.
         ConnectionLabel = mc.HidConnectionType switch

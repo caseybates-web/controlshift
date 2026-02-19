@@ -49,6 +49,10 @@ public sealed partial class MainWindow : Window
     private bool      _aHoldEnteredReorder;  // true once the 500ms threshold was crossed
     private int       _navTickCount;         // total ticks; reset by watchdog every 5s
 
+    // Dedicated timer for hold-A progress bar animation.
+    // Initialized once in the constructor; reused on every A press (never recreated).
+    private readonly DispatcherTimer _holdTimer;
+
     // ── Diagnostic logging ────────────────────────────────────────────────────
 
     // Timestamped log file in %TEMP% — written even in Release, survives a crash.
@@ -118,6 +122,11 @@ public sealed partial class MainWindow : Window
         _navTimer.Tick += NavTimer_Tick;
         _navTimer.Start();
 
+        // ONE hold timer — created here, reused for every A press, never recreated.
+        // Fires at 16ms while A is held; drives the hold-progress bar animation.
+        _holdTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _holdTimer.Tick += HoldTimer_Tick;
+
         // Watchdog: every 5s verify the nav timer is still running and restart if not.
         // Guards against any scenario where the timer silently stops (driver errors,
         // unhandled exceptions escaping the catch, or unexpected Stop() calls).
@@ -129,7 +138,7 @@ public sealed partial class MainWindow : Window
         Activated += (_, args) =>
             _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
 
-        Closed += (_, _) => { _pollTimer.Stop(); _navTimer.Stop(); _watchdogTimer.Stop(); };
+        Closed += (_, _) => { _pollTimer.Stop(); _navTimer.Stop(); _watchdogTimer.Stop(); _holdTimer.Stop(); };
 
         // Initial scan on window open.
         _ = RefreshAsync();
@@ -185,7 +194,7 @@ public sealed partial class MainWindow : Window
     private void NavTimer_Tick(object? sender, object e)
     {
         // Confirm the timer is still alive — visible in Debug Output and log file.
-        Debug.WriteLine($"NAV TICK #{_navTickCount}");
+        Debug.WriteLine($"NAV TICK #{_navTickCount} navTimer=0x{_navTimer.GetHashCode():X}");
         _navTickCount++;
 
         try
@@ -250,33 +259,23 @@ public sealed partial class MainWindow : Window
                 }
 
                 // ── A button: tap (<500ms) = rumble; hold (≥500ms) = reorder ────────
+                // Progress animation is owned by _holdTimer (HoldTimer_Tick).
+                // NavTimer_Tick only handles press start and release.
 
                 if (aJustPressed && _focusedCardIndex >= 0)
                 {
-                    // A just went down — start tracking the hold.
+                    // Cancel any previous hold (e.g. rapid double-press) then start fresh.
+                    _holdTimer.Stop();
                     _aHoldStart          = DateTime.UtcNow;
                     _aHoldEnteredReorder = false;
-                    _cards[_focusedCardIndex].ShowHoldProgress(0.0);
-                    NavLog($"[NavTick] A pressed on card {_focusedCardIndex} — hold tracking started");
-                }
-
-                if (aHeld && !aJustPressed && _aHoldStart.HasValue && _focusedCardIndex >= 0)
-                {
-                    // A is being held — update progress bar and check 500ms threshold.
-                    double elapsedMs = (DateTime.UtcNow - _aHoldStart.Value).TotalMilliseconds;
-                    _cards[_focusedCardIndex].ShowHoldProgress(elapsedMs / 500.0);
-
-                    if (elapsedMs >= 500.0 && !_aHoldEnteredReorder)
-                    {
-                        _aHoldEnteredReorder = true;
-                        _cards[_focusedCardIndex].HideHoldProgress();
-                        NavLog("[NavTick] → StartReorder (hold ≥500ms)");
-                        StartReorder();
-                    }
+                    _holdTimer.Start();
+                    NavLog($"[NavTick] A pressed on card {_focusedCardIndex} — " +
+                           $"holdTimer hashCode=0x{_holdTimer.GetHashCode():X}");
                 }
 
                 if (aJustReleased)
                 {
+                    _holdTimer.Stop();
                     if (_aHoldStart.HasValue && !_aHoldEnteredReorder && _focusedCardIndex >= 0)
                     {
                         // Tap (released before 500ms) — rumble to identify, no reorder.
@@ -298,15 +297,58 @@ public sealed partial class MainWindow : Window
     private void WatchdogTimer_Tick(object? sender, object e)
     {
         NavLog($"[Watchdog] navTimer.IsEnabled={_navTimer.IsEnabled} " +
-               $"windowActive={_windowActive} ticksSinceLast={_navTickCount}");
+               $"windowActive={_windowActive} ticksSinceLast={_navTickCount} " +
+               $"navTimer=0x{_navTimer.GetHashCode():X}");
 
-        if (!_navTimer.IsEnabled)
+        // Restart if disabled OR if it's enabled but stalled (no ticks in the last 5s).
+        bool stalled = _navTimer.IsEnabled && _navTickCount == 0;
+        if (!_navTimer.IsEnabled || stalled)
         {
-            NavLog("[Watchdog] *** nav timer was stopped — restarting ***");
+            NavLog($"[Watchdog] *** nav timer {(stalled ? "stalled" : "stopped")} — restarting ***");
+            _navTimer.Stop();
             _navTimer.Start();
         }
 
         _navTickCount = 0;
+    }
+
+    /// <summary>
+    /// Owns the hold-A progress bar animation.
+    /// Fires every 16ms while A is held, started by NavTimer_Tick on A press.
+    /// Suppresses the bar for the first 200ms (tap feels instant), then fills it
+    /// over [200ms, 500ms]. Calls StartReorder() at the 500ms threshold and stops itself.
+    /// </summary>
+    private void HoldTimer_Tick(object? sender, object e)
+    {
+        try
+        {
+            if (_aHoldStart is null || _focusedCardIndex < 0)
+            {
+                // Guard: shouldn't happen, but stop cleanly if state is inconsistent.
+                _holdTimer.Stop();
+                return;
+            }
+
+            double elapsedMs = (DateTime.UtcNow - _aHoldStart.Value).TotalMilliseconds;
+
+            // Show progress only after 200ms delay; map [200ms, 500ms] → [0, 1].
+            if (elapsedMs >= 200.0)
+                _cards[_focusedCardIndex].ShowHoldProgress((elapsedMs - 200.0) / 300.0);
+
+            if (elapsedMs >= 500.0 && !_aHoldEnteredReorder)
+            {
+                _aHoldEnteredReorder = true;
+                _holdTimer.Stop();
+                _cards[_focusedCardIndex].HideHoldProgress();
+                NavLog("[HoldTimer] → StartReorder (hold ≥500ms)");
+                StartReorder();
+            }
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[HoldTimer_Tick ERROR] {ex}");
+            _holdTimer.Stop();
+        }
     }
 
     // ── Navigation: keyboard ──────────────────────────────────────────────────
@@ -376,6 +418,7 @@ public sealed partial class MainWindow : Window
         // If the user moved focus mid-hold, cancel the pending hold on the old card.
         if (_aHoldStart.HasValue && _focusedCardIndex >= 0 && _focusedCardIndex != idx)
         {
+            _holdTimer.Stop();
             _cards[_focusedCardIndex].HideHoldProgress();
             _aHoldStart          = null;
             _aHoldEnteredReorder = false;

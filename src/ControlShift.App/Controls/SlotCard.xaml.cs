@@ -34,9 +34,10 @@ public sealed partial class SlotCard : UserControl
 {
     // ── Card state colors ─────────────────────────────────────────────────────
 
-    // Only the player badge changes color; CardBorder background/border stay fixed in XAML.
     private static readonly Color ColorBadgeEmpty     = Color.FromArgb(255,  85,  85,  85); // #555555
     private static readonly Color ColorBadgeConnected = Color.FromArgb(255,  16, 124,  16); // #107C10
+    private static readonly Color ColorBorderNormal   = Color.FromArgb(255,  68,  68,  68); // #444444
+    private static readonly Color ColorBorderActive   = Color.FromArgb(255, 255, 255, 255); // white
 
     // ── Fields ────────────────────────────────────────────────────────────────
 
@@ -132,33 +133,34 @@ public sealed partial class SlotCard : UserControl
 
     private void ApplyCardState()
     {
-        // CardBorder background (#2D2D2D), border (#303030), and thickness (1px) are
-        // fixed in XAML and never changed here. Only Opacity, scale, and the three
-        // glow-ring borders are controlled in code.
         switch (_currentState)
         {
             case CardState.Normal:
                 Opacity = 1.0;
                 AnimateScale(1.0);
-                HideGlowRings();
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderNormal);
+                CardBorder.BorderThickness = new Thickness(1);
                 break;
 
             case CardState.Focused:
                 Opacity = 1.0;
                 AnimateScale(1.03);
-                ShowGlowRings(innerThickness: 2);
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderActive);
+                CardBorder.BorderThickness = new Thickness(3);
                 break;
 
             case CardState.Selected:
                 Opacity = 1.0;
                 AnimateScale(1.03);
-                ShowGlowRings(innerThickness: 3);
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderActive);
+                CardBorder.BorderThickness = new Thickness(4);
                 break;
 
             case CardState.Dimmed:
                 Opacity = 0.5;
                 AnimateScale(1.0);
-                HideGlowRings();
+                CardBorder.BorderBrush     = new SolidColorBrush(ColorBorderNormal);
+                CardBorder.BorderThickness = new Thickness(1);
                 break;
         }
     }
@@ -196,28 +198,6 @@ public sealed partial class SlotCard : UserControl
 
         visual.StartAnimation("Scale.X", anim);
         visual.StartAnimation("Scale.Y", anim);
-    }
-
-    // ── Glow rings (pure XAML) ────────────────────────────────────────────────
-
-    // Three nested Border elements (GlowOuter, GlowMiddle, GlowInner) declared in XAML
-    // with negative margins so they extend beyond CardBorder into the 8px margin.
-    // Each has IsHitTestVisible=False and a white BorderBrush at varying opacity,
-    // creating a stepped glow that follows CornerRadius without any Composition API.
-
-    private void HideGlowRings()
-    {
-        GlowOuter.Visibility  = Visibility.Collapsed;
-        GlowMiddle.Visibility = Visibility.Collapsed;
-        GlowInner.Visibility  = Visibility.Collapsed;
-    }
-
-    private void ShowGlowRings(double innerThickness)
-    {
-        GlowOuter.Visibility      = Visibility.Visible;
-        GlowMiddle.Visibility     = Visibility.Visible;
-        GlowInner.Visibility      = Visibility.Visible;
-        GlowInner.BorderThickness = new Thickness(innerThickness);
     }
 
     // ── Hold-to-reorder progress bar ──────────────────────────────────────────

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ControlShift.Core.Enumeration;
 
 namespace ControlShift.Core.Devices;
@@ -11,8 +12,9 @@ namespace ControlShift.Core.Devices;
 /// for this marker is the standard way to associate XInput slots with HID devices without
 /// needing admin rights or registry access.
 ///
-/// Bluetooth detection: Bluetooth HID device paths contain "BTHENUM" or the HID-over-GATT
-/// service UUID "{00001124-0000-1000-8000-00805f9b34fb}". All other paths are treated as USB.
+/// Bluetooth detection: Bluetooth HID device paths contain "BTHENUM" (classic BT), the
+/// HID-over-GATT UUID "{00001124-0000-1000-8000-00805f9b34fb}", or "BTHLEDevice" (BT LE /
+/// Xbox Wireless Controller on Windows 10/11). All other paths are treated as USB.
 /// </remarks>
 public sealed class ControllerMatcher : IControllerMatcher
 {
@@ -31,6 +33,11 @@ public sealed class ControllerMatcher : IControllerMatcher
     {
         var fingerprinted = _fingerprinter.Fingerprint(hidDevices);
         var results = new MatchedController[xinputSlots.Count];
+
+        // Debug: dump all HID paths so BT matching failures are visible in Output window.
+        Debug.WriteLine($"[ControllerMatcher] {xinputSlots.Count} XInput slots, {hidDevices.Count} HID devices:");
+        foreach (var h in hidDevices)
+            Debug.WriteLine($"  HID VID={h.Vid} PID={h.Pid} name='{h.ProductName}' path={h.DevicePath}");
 
         for (int i = 0; i < xinputSlots.Count; i++)
         {
@@ -67,6 +74,10 @@ public sealed class ControllerMatcher : IControllerMatcher
                 }
             }
 
+            Debug.WriteLine($"  Slot {slot.SlotIndex}: marker='{igMarker}' → {(hid is not null ? $"matched VID={hid.Vid} PID={hid.Pid} name='{hid.ProductName}'" : "NO HID MATCH")}");
+            if (hid is not null)
+                Debug.WriteLine($"    BT check → conn={DetectHidConnectionType(hid.DevicePath)}");
+
             results[i] = new MatchedController(
                 slot.SlotIndex,
                 IsConnected:            true,
@@ -85,9 +96,18 @@ public sealed class ControllerMatcher : IControllerMatcher
 
     private static HidConnectionType DetectHidConnectionType(string devicePath)
     {
-        if (devicePath.IndexOf("BTHENUM", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            devicePath.IndexOf("{00001124-0000-1000-8000-00805f9b34fb}",
+        // Classic Bluetooth HID (all controllers except Xbox Wireless on Win10/11)
+        if (devicePath.IndexOf("BTHENUM", StringComparison.OrdinalIgnoreCase) >= 0)
+            return HidConnectionType.Bluetooth;
+
+        // HID-over-GATT service UUID (HoGP — some BT classic devices also appear here)
+        if (devicePath.IndexOf("{00001124-0000-1000-8000-00805f9b34fb}",
                                StringComparison.OrdinalIgnoreCase) >= 0)
+            return HidConnectionType.Bluetooth;
+
+        // Bluetooth LE / Xbox Wireless Controller paired via BT on Windows 10/11.
+        // These devices use the BTHLEDevice enumerator rather than BTHENUM.
+        if (devicePath.IndexOf("BTHLEDevice", StringComparison.OrdinalIgnoreCase) >= 0)
             return HidConnectionType.Bluetooth;
 
         return HidConnectionType.Usb;

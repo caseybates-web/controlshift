@@ -29,10 +29,11 @@
          into the 8px horizontal margin the parent SlotPanel sets on each card. -->
     <Grid>
 
-        <!-- Content card: solid #2D2D2D, border and background never change in code. -->
+        <!-- Content card: solid #2D2D2D. BorderBrush/Thickness are set in code:
+             Normal/Dimmed = #444444 at 1px; Focused = white at 3px; Selected = white at 4px. -->
         <Border x:Name="CardBorder"
                 Background="#2D2D2D"
-                BorderBrush="#303030"
+                BorderBrush="#444444"
                 BorderThickness="1" CornerRadius="12"
                 Padding="16,14" MinHeight="80">
 
@@ -134,30 +135,6 @@
                              Visibility="Collapsed" />
             </Grid>
         </Border>
-
-        <!-- Layered white glow rings — all Collapsed in Normal / Dimmed state.
-             Negative margins extend each ring beyond the Grid into the card's margin
-             so the glow follows the rounded corners without any Composition API.
-             IsHitTestVisible=False lets taps fall through to CardBorder. -->
-
-        <!-- Outer ring: faintest, extends 4px outside the card edge. -->
-        <Border x:Name="GlowOuter"
-                Background="Transparent" CornerRadius="14"
-                BorderBrush="White" BorderThickness="1" Opacity="0.2"
-                Margin="-4" IsHitTestVisible="False" Visibility="Collapsed" />
-
-        <!-- Middle ring: medium brightness, extends 2px outside the card edge. -->
-        <Border x:Name="GlowMiddle"
-                Background="Transparent" CornerRadius="13"
-                BorderBrush="White" BorderThickness="1" Opacity="0.4"
-                Margin="-2" IsHitTestVisible="False" Visibility="Collapsed" />
-
-        <!-- Inner ring: brightest, flush with the card edge.
-             BorderThickness set to 2 (Focused) or 3 (Selected) in code. -->
-        <Border x:Name="GlowInner"
-                Background="Transparent" CornerRadius="12"
-                BorderBrush="White" BorderThickness="2" Opacity="0.9"
-                Margin="0" IsHitTestVisible="False" Visibility="Collapsed" />
 
     </Grid>
 </UserControl>
