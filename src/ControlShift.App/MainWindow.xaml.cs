@@ -1097,18 +1097,18 @@ public sealed partial class MainWindow : Window
                 {
                     // Horizontal card row: left/right navigates between cards,
                     // down from any card → first footer button, up from footer → last card.
-                    int cardIdx = FocusedCardIndex;
-                    if (navLeft && cardIdx > 0)
+                    int fsCardIdx = FocusedCardIndex;
+                    if (navLeft && fsCardIdx > 0)
                     {
-                        NavLog($"[NavTick] → Focus card {cardIdx - 1} (left)");
-                        _cards[cardIdx - 1].Focus(FocusState.Programmatic);
+                        NavLog($"[NavTick] → Focus card {fsCardIdx - 1} (left)");
+                        _cards[fsCardIdx - 1].Focus(FocusState.Programmatic);
                     }
-                    if (navRight && cardIdx >= 0 && cardIdx < _cards.Count - 1)
+                    if (navRight && fsCardIdx >= 0 && fsCardIdx < _cards.Count - 1)
                     {
-                        NavLog($"[NavTick] → Focus card {cardIdx + 1} (right)");
-                        _cards[cardIdx + 1].Focus(FocusState.Programmatic);
+                        NavLog($"[NavTick] → Focus card {fsCardIdx + 1} (right)");
+                        _cards[fsCardIdx + 1].Focus(FocusState.Programmatic);
                     }
-                    if (navDown && cardIdx >= 0)
+                    if (navDown && fsCardIdx >= 0)
                     {
                         // Down from card row → first footer button
                         int firstBtn = _cards.Count; // index past cards in elements list
