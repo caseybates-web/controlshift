@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Microsoft.UI.Xaml;
 using ControlShift.Core.Devices;
 using ControlShift.Core.Enumeration;
 
@@ -30,11 +31,18 @@ public sealed class SlotViewModel : INotifyPropertyChanged
 
     private bool   _isConnected;
     private bool   _isIntegrated;
+    private bool   _isForwarding;
     private string _deviceName      = "—";
     private string _connectionLabel = string.Empty;
     private string _vendorBrand     = string.Empty;
     private string _vidPid          = string.Empty;
     private string _batteryText     = string.Empty;
+
+    /// <summary>HID device path for the physical controller (used by forwarding).</summary>
+    public string? DevicePath { get; set; }
+
+    /// <summary>The slot index before any reorder was applied (for revert).</summary>
+    public int OriginalSlotIndex { get; set; }
 
     public bool IsConnected
     {
@@ -47,6 +55,19 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         get => _isIntegrated;
         set => Set(ref _isIntegrated, value);
     }
+
+    public bool IsForwarding
+    {
+        get => _isForwarding;
+        set
+        {
+            Set(ref _isForwarding, value);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ForwardingBadgeVisibility)));
+        }
+    }
+
+    public Visibility ForwardingBadgeVisibility =>
+        IsForwarding ? Visibility.Visible : Visibility.Collapsed;
 
     public string DeviceName
     {
@@ -146,6 +167,7 @@ public sealed class SlotViewModel : INotifyPropertyChanged
 
         VendorBrand = mc.VendorBrand ?? string.Empty;
         VidPid      = mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : string.Empty;
+        DevicePath  = mc.Hid?.DevicePath;
 
         BatteryText = mc.BatteryPercent.HasValue ? $"{mc.BatteryPercent}%" : string.Empty;
     }

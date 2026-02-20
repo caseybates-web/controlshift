@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Vortice.XInput;
 using Windows.Graphics;
@@ -10,6 +11,8 @@ using ControlShift.App.Controls;
 using ControlShift.App.ViewModels;
 using ControlShift.Core.Devices;
 using ControlShift.Core.Enumeration;
+using ControlShift.Core.Forwarding;
+using ControlShift.Core.Models;
 
 namespace ControlShift.App;
 
@@ -18,12 +21,14 @@ namespace ControlShift.App;
 /// Shows 4 controller slot cards. Click a card to rumble it.
 /// D-pad / Tab navigates cards; A / Enter selects for reordering; B / Escape cancels.
 /// Polls for device changes every 5 seconds.
+/// Supports controller reordering via ViGEm + HidHide forwarding.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
     // ── Core ──────────────────────────────────────────────────────────────────
 
     private readonly MainViewModel   _viewModel;
+    private readonly IInputForwardingService _forwarding;
     private readonly DispatcherTimer _pollTimer;
     private readonly SlotCard[]      _cards = new SlotCard[4];
 
@@ -77,11 +82,14 @@ public sealed partial class MainWindow : Window
 
     // ── Construction ──────────────────────────────────────────────────────────
 
-    public MainWindow()
+    public MainWindow(IInputForwardingService forwarding)
     {
         InitializeComponent();
 
         NavLog($"MainWindow ctor — log: {NavLogPath}");
+
+        _forwarding = forwarding;
+        _forwarding.ForwardingError += OnForwardingError;
 
         string dbPath      = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
         string vendorsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-vendors.json");
@@ -97,7 +105,7 @@ public sealed partial class MainWindow : Window
         catch { vendorDb = new VendorDatabase(Array.Empty<KnownVendorEntry>()); }
 
         var matcher = new ControllerMatcher(vendorDb, fingerprinter);
-        _viewModel  = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher);
+        _viewModel  = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher, forwarding);
 
         SetWindowSize(400, 700);
 
@@ -119,7 +127,12 @@ public sealed partial class MainWindow : Window
 
         // Poll for device changes every 5 seconds.
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _pollTimer.Tick += async (_, _) => await RefreshAsync();
+        _pollTimer.Tick += async (_, _) =>
+        {
+            // Don't re-enumerate while forwarding — hidden devices would show as disconnected.
+            if (!_viewModel.IsForwarding)
+                await RefreshAsync();
+        };
         _pollTimer.Start();
 
         // Poll XInput at 16ms (~60 fps) for A/B buttons and D-pad navigation.
@@ -144,7 +157,16 @@ public sealed partial class MainWindow : Window
         Activated += (_, args) =>
             _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
 
-        Closed += (_, _) => { _pollTimer.Stop(); _navTimer.Stop(); _watchdogTimer.Stop(); _holdTimer.Stop(); };
+        Closed += async (_, _) =>
+        {
+            _pollTimer.Stop();
+            _navTimer.Stop();
+            _watchdogTimer.Stop();
+            _holdTimer.Stop();
+            // Ensure all forwarding stops and HidHide rules are cleared on close.
+            if (_viewModel.IsForwarding)
+                await _viewModel.RevertAsync();
+        };
 
         // Initial scan on window open.
         _ = RefreshAsync();
@@ -186,13 +208,176 @@ public sealed partial class MainWindow : Window
             if (i < _viewModel.Slots.Count)
                 _cards[i].SetSlot(_viewModel.Slots[i]);
         }
+
+        if (_viewModel.IsForwarding)
+        {
+            int fwdCount = _forwarding.ActiveAssignments.Count(a => a.SourceDevicePath is not null);
+            StatusText.Text = $"Forwarding active — {fwdCount} controller{(fwdCount != 1 ? "s" : "")}";
+            RevertButton.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            int connected = _viewModel.Slots.Count(s => s.IsConnected);
+            StatusText.Text = connected > 0
+                ? $"{connected} controller{(connected != 1 ? "s" : "")} connected"
+                : "No controllers detected";
+            RevertButton.Visibility = Visibility.Collapsed;
+        }
     }
 
-    private void ExitButton_Click(object sender, RoutedEventArgs e)
+    // ── Button handlers ──────────────────────────────────────────────────────
+
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        _pollTimer.Stop();
-        _navTimer.Stop();
-        this.Close();
+        RefreshButton.IsEnabled = false;
+        try
+        {
+            await RefreshAsync();
+        }
+        finally
+        {
+            RefreshButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Reverts all forwarding — stops ViGEm controllers, unhides physical devices.
+    /// </summary>
+    private async void RevertButton_Click(object sender, RoutedEventArgs e)
+    {
+        RevertButton.IsEnabled = false;
+        try
+        {
+            await _viewModel.RevertAsync();
+            UpdateCards();
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorDialogAsync("Revert Failed", ex.Message);
+        }
+        finally
+        {
+            RevertButton.IsEnabled = true;
+        }
+    }
+
+    // ── Forwarding: apply reorder ───────────────────────────────────────────
+
+    /// <summary>
+    /// Builds <see cref="SlotAssignment"/>s from the current visual card order
+    /// and starts forwarding. Called after the user confirms a reorder.
+    /// </summary>
+    public async Task ApplyReorderAsync()
+    {
+        // Build slot assignments from the visual card order.
+        var assignments = new List<SlotAssignment>();
+        for (int i = 0; i < _cards.Length; i++)
+        {
+            if (i >= _viewModel.Slots.Count) break;
+            var slot = _viewModel.Slots[i];
+
+            assignments.Add(new SlotAssignment
+            {
+                TargetSlot       = i,
+                SourceDevicePath = slot.IsConnected ? slot.DevicePath : null,
+                IsForwarding     = slot.IsConnected && slot.DevicePath is not null,
+            });
+        }
+
+        // Check if any actual reorder happened (a connected device moved slots).
+        bool hasChanges = assignments.Any(a =>
+            a.SourceDevicePath is not null &&
+            _viewModel.Slots.FirstOrDefault(s => s.DevicePath == a.SourceDevicePath)
+                ?.OriginalSlotIndex != a.TargetSlot);
+
+        if (!hasChanges)
+        {
+            await ShowErrorDialogAsync("No Changes", "The controller order has not changed.");
+            return;
+        }
+
+        // Confirm with the user.
+        bool confirmed = await ShowConfirmDialogAsync(assignments);
+        if (!confirmed) return;
+
+        try
+        {
+            await _viewModel.ApplyReorderAsync(assignments);
+            UpdateCards();
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorDialogAsync("Reorder Failed", ex.Message);
+        }
+    }
+
+    // ── Dialogs ─────────────────────────────────────────────────────────────
+
+    private async Task<bool> ShowConfirmDialogAsync(IReadOnlyList<SlotAssignment> assignments)
+    {
+        var lines = new List<string>();
+        for (int i = 0; i < assignments.Count; i++)
+        {
+            var a = assignments[i];
+            if (a.SourceDevicePath is null)
+            {
+                lines.Add($"P{i + 1}: Empty");
+                continue;
+            }
+
+            var slot = _viewModel.Slots.FirstOrDefault(s => s.DevicePath == a.SourceDevicePath);
+            string name = slot?.DeviceName ?? "Controller";
+            string conn = slot?.ConnectionLabel ?? "";
+            string from = slot is not null ? $" — was P{slot.OriginalSlotIndex + 1}" : "";
+            lines.Add($"P{i + 1}: {name} ({conn}){from}");
+        }
+
+        var content = string.Join("\n", lines) +
+            "\n\nPhysical controllers will be hidden from games.\nControlShift must stay running while forwarding.";
+
+        var dialog = new ContentDialog
+        {
+            Title = "Apply Controller Reorder?",
+            Content = content,
+            PrimaryButtonText = "Apply",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = this.Content.XamlRoot,
+        };
+
+        var result = await dialog.ShowAsync();
+        return result == ContentDialogResult.Primary;
+    }
+
+    private async Task ShowErrorDialogAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = message,
+            CloseButtonText = "OK",
+            XamlRoot = this.Content.XamlRoot,
+        };
+
+        await dialog.ShowAsync();
+    }
+
+    // ── Forwarding error handler ────────────────────────────────────────────
+
+    private void OnForwardingError(object? sender, ForwardingErrorEventArgs e)
+    {
+        // Marshal to UI thread.
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            StatusText.Text = $"Controller disconnected from P{e.TargetSlot + 1}";
+
+            // If all forwarding has stopped, auto-revert.
+            if (!_forwarding.IsForwarding)
+            {
+                await _viewModel.RevertAsync();
+                UpdateCards();
+            }
+        });
     }
 
     // ── Navigation: XInput polling ────────────────────────────────────────────

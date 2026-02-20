@@ -1,3 +1,5 @@
+using ControlShift.Core.Devices;
+
 namespace ControlShift.App;
 
 /// <summary>
@@ -20,9 +22,35 @@ namespace ControlShift.App;
 /// </remarks>
 class Program
 {
+    /// <summary>
+    /// Shared HidHide service, created as early as possible for crash safety.
+    /// Accessed by <see cref="App"/> to pass to the forwarding service.
+    /// </summary>
+    internal static IHidHideService HidHideService { get; private set; } = new NullHidHideService();
+
     [STAThread]
     static void Main(string[] args)
     {
+        // ── P0 CRASH SAFETY: Create HidHide service and clear stale rules ──────
+        // This runs before WinUI starts, so even if the app crashed previously
+        // while controllers were hidden, they are restored immediately.
+        try
+        {
+            var hidHide = new HidHideService();
+            if (hidHide.IsDriverInstalled)
+            {
+                HidHideService = hidHide;
+            }
+        }
+        catch
+        {
+            // HidHide driver not installed — NullHidHideService stays.
+        }
+
+        CrashSafetyGuard.Install(HidHideService);
+
+        // ── Start WinUI ─────────────────────────────────────────────────────────
+
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         Microsoft.UI.Xaml.Application.Start(p =>

@@ -89,6 +89,14 @@
                                            Foreground="{StaticResource XbAccentBrush}" />
                             </Border>
 
+                            <Border x:Name="ForwardingBadge"
+                                    Background="#1D4B1D" CornerRadius="8"
+                                    Padding="8,2" Visibility="Collapsed">
+                                <TextBlock Text="FORWARDING"
+                                           FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{StaticResource XbAccentBrush}" />
+                            </Border>
+
                             <Border x:Name="BrandBadge"
                                     Background="#3A3A3A" CornerRadius="8"
                                     Padding="8,2" Visibility="Collapsed">

@@ -83,6 +83,7 @@ public sealed partial class SlotCard : UserControl
             ConnectedContent.Visibility  = Visibility.Collapsed;
             EmptyDash.Visibility         = Visibility.Visible;
             BatterySection.Visibility    = Visibility.Collapsed;
+            ForwardingBadge.Visibility   = Visibility.Collapsed;
             return;
         }
 
@@ -97,6 +98,10 @@ public sealed partial class SlotCard : UserControl
             ? Visibility.Collapsed : Visibility.Visible;
 
         IntegratedBadge.Visibility = _slot.IsIntegrated
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        // Forwarding badge.
+        ForwardingBadge.Visibility = _slot.IsForwarding
             ? Visibility.Visible : Visibility.Collapsed;
 
         BrandBadge.Visibility = string.IsNullOrEmpty(_slot.VendorBrand)
@@ -117,6 +122,15 @@ public sealed partial class SlotCard : UserControl
             BatteryIcon.Text = _slot.BatteryGlyph;
             BatteryText.Text = _slot.BatteryText;
         }
+    }
+
+    /// <summary>Show or hide the FORWARDING badge.</summary>
+    public void SetForwarding(bool isForwarding)
+    {
+        if (_slot is not null)
+            _slot.IsForwarding = isForwarding;
+        ForwardingBadge.Visibility = isForwarding
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ── Visual state ──────────────────────────────────────────────────────────

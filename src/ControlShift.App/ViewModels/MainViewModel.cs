@@ -1,28 +1,36 @@
 using System.Collections.ObjectModel;
 using ControlShift.Core.Devices;
 using ControlShift.Core.Enumeration;
+using ControlShift.Core.Forwarding;
+using ControlShift.Core.Models;
 
 namespace ControlShift.App.ViewModels;
 
 /// <summary>
-/// Main view model — owns the 4 controller slot VMs and drives enumeration.
+/// Main view model — owns the 4 controller slot VMs and drives enumeration + forwarding.
 /// </summary>
 public sealed class MainViewModel
 {
-    private readonly IXInputEnumerator   _xinput;
-    private readonly IHidEnumerator      _hid;
-    private readonly IControllerMatcher  _matcher;
+    private readonly IXInputEnumerator    _xinput;
+    private readonly IHidEnumerator       _hid;
+    private readonly IControllerMatcher   _matcher;
+    private readonly IInputForwardingService _forwarding;
 
     public ObservableCollection<SlotViewModel> Slots { get; } = new();
 
+    /// <summary>Whether any controller forwarding is currently active.</summary>
+    public bool IsForwarding => _forwarding.IsForwarding;
+
     public MainViewModel(
-        IXInputEnumerator  xinput,
-        IHidEnumerator     hid,
-        IControllerMatcher matcher)
+        IXInputEnumerator      xinput,
+        IHidEnumerator         hid,
+        IControllerMatcher     matcher,
+        IInputForwardingService forwarding)
     {
-        _xinput  = xinput;
-        _hid     = hid;
-        _matcher = matcher;
+        _xinput     = xinput;
+        _hid        = hid;
+        _matcher    = matcher;
+        _forwarding = forwarding;
     }
 
     /// <summary>
@@ -92,6 +100,7 @@ public sealed class MainViewModel
         for (int i = 0; i < matched.Count; i++)
         {
             var vm = new SlotViewModel(matched[i].SlotIndex);
+            vm.OriginalSlotIndex = matched[i].SlotIndex;
             vm.UpdateFrom(matched[i]);
             vms.Add(vm);
         }
@@ -106,5 +115,31 @@ public sealed class MainViewModel
         Slots.Clear();
         foreach (var vm in sorted)
             Slots.Add(vm);
+    }
+
+    /// <summary>
+    /// Applies a controller reorder by starting ViGEm + HidHide forwarding.
+    /// </summary>
+    public async Task ApplyReorderAsync(IReadOnlyList<SlotAssignment> assignments)
+    {
+        await _forwarding.StartForwardingAsync(assignments);
+
+        // Mark all slots that have active forwarding.
+        foreach (var slot in Slots)
+        {
+            var match = assignments.FirstOrDefault(a => a.TargetSlot == slot.SlotIndex);
+            slot.IsForwarding = match?.SourceDevicePath is not null;
+        }
+    }
+
+    /// <summary>
+    /// Reverts all forwarding and refreshes the controller list.
+    /// </summary>
+    public async Task RevertAsync()
+    {
+        await _forwarding.StopForwardingAsync();
+        foreach (var slot in Slots)
+            slot.IsForwarding = false;
+        await RefreshAsync();
     }
 }
