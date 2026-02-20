@@ -1,4 +1,5 @@
 using FluentAssertions;
+using ControlShift.Core.Devices;
 using ControlShift.Core.Forwarding;
 
 namespace ControlShift.Core.Tests.Forwarding;
@@ -24,7 +25,7 @@ public class HidReportParserTests
     public void Parse_Empty_ReturnsDefault()
     {
         var report = HidReportParser.Parse(ReadOnlySpan<byte>.Empty);
-        report.Should().Be(default(Devices.GamepadReport));
+        report.Should().Be(default(GamepadReport));
     }
 
     [Fact]
@@ -151,6 +152,6 @@ public class HidReportParserTests
         var raw = new byte[HidReportParser.MinReportLength - 1];
         var report = HidReportParser.Parse(raw);
 
-        report.Should().Be(default(Devices.GamepadReport));
+        report.Should().Be(default(GamepadReport));
     }
 }
