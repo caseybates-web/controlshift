@@ -146,6 +146,9 @@ public sealed partial class MainWindow : Window
 
         Closed += (_, _) => { _pollTimer.Stop(); _navTimer.Stop(); _watchdogTimer.Stop(); _holdTimer.Stop(); };
 
+        // XInput diagnostic dump — written once on startup before any abstraction.
+        WriteXInputDiagnostic();
+
         // Initial scan on window open.
         _ = RefreshAsync();
     }
@@ -655,4 +658,103 @@ public sealed partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    // ── XInput diagnostic dump ────────────────────────────────────────────────
+    // Raw P/Invoke to XInputGetState and XInputGetBatteryInformation — bypasses
+    // Vortice.XInput so we can log the actual Win32 return codes and struct values
+    // without any wrapping. Does not affect any existing logic.
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XINPUT_GAMEPAD
+    {
+        public ushort wButtons;
+        public byte   bLeftTrigger;
+        public byte   bRightTrigger;
+        public short  sThumbLX;
+        public short  sThumbLY;
+        public short  sThumbRX;
+        public short  sThumbRY;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XINPUT_STATE
+    {
+        public uint          dwPacketNumber;
+        public XINPUT_GAMEPAD Gamepad;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XINPUT_BATTERY_INFORMATION
+    {
+        public byte BatteryType;
+        public byte BatteryLevel;
+    }
+
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
+    private static extern uint RawXInputGetState(uint dwUserIndex, out XINPUT_STATE pState);
+
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputGetBatteryInformation")]
+    private static extern uint RawXInputGetBatteryInformation(
+        uint dwUserIndex, byte devType, out XINPUT_BATTERY_INFORMATION pBatteryInformation);
+
+    private static void WriteXInputDiagnostic()
+    {
+        const uint ERROR_SUCCESS                 = 0;
+        const uint ERROR_DEVICE_NOT_CONNECTED    = 1167;
+        const byte BATTERY_DEVTYPE_GAMEPAD       = 0;
+
+        try
+        {
+            var dumpPath = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), "controlshift-xinput-dump.txt");
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"ControlShift XInput dump — {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+            sb.AppendLine();
+
+            for (uint slot = 0; slot < 4; slot++)
+            {
+                uint rc = RawXInputGetState(slot, out XINPUT_STATE state);
+
+                string rcLabel = rc == ERROR_SUCCESS              ? "ERROR_SUCCESS (connected)"
+                               : rc == ERROR_DEVICE_NOT_CONNECTED ? "ERROR_DEVICE_NOT_CONNECTED"
+                               : $"0x{rc:X8}";
+
+                sb.AppendLine($"Slot {slot}: rc={rc} — {rcLabel}");
+
+                if (rc == ERROR_SUCCESS)
+                {
+                    sb.AppendLine($"  packetNumber = {state.dwPacketNumber}");
+
+                    uint brc = RawXInputGetBatteryInformation(
+                        slot, BATTERY_DEVTYPE_GAMEPAD, out XINPUT_BATTERY_INFORMATION batt);
+
+                    string battTypeLabel = batt.BatteryType switch
+                    {
+                        0   => "DISCONNECTED",
+                        1   => "WIRED",
+                        2   => "ALKALINE",
+                        3   => "NIMH",
+                        255 => "UNKNOWN",
+                        _   => $"0x{batt.BatteryType:X2}",
+                    };
+                    string battLevelLabel = batt.BatteryLevel switch
+                    {
+                        0 => "EMPTY",
+                        1 => "LOW",
+                        2 => "MEDIUM",
+                        3 => "FULL",
+                        _ => $"0x{batt.BatteryLevel:X2}",
+                    };
+
+                    sb.AppendLine($"  battery:      rc={brc}  type={batt.BatteryType} ({battTypeLabel})  level={batt.BatteryLevel} ({battLevelLabel})");
+                }
+
+                sb.AppendLine();
+            }
+
+            System.IO.File.WriteAllText(dumpPath, sb.ToString());
+        }
+        catch { /* diagnostic writes must never throw */ }
+    }
 }
