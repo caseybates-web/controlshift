@@ -2,7 +2,7 @@
 
 A lightweight Windows app that lets users see all connected controllers, identify them via rumble, and reorder their XInput Player Index assignments on gaming handhelds. Solves the problem where the integrated gamepad permanently holds Player 1, preventing Bluetooth controllers from being recognized by games that only poll the first controller.
 
-**Status:** Phase 1 complete. Phase 2 Step 7 done. Step 8 (controller navigation) in progress.
+**Status:** Phase 2 Step 9 (forwarding stack) in progress.
 **Owner:** Hardware PdM managing e2e
 **License:** MIT (open source, public release)
 **Target:** Windows 10 (19041) minimum, Windows 11 supported
@@ -231,14 +231,19 @@ Allow the user to navigate cards and initiate reordering without a mouse.
 - Tab order (`TabIndex`) must match visual top-to-bottom order; rebuild after reorder
 - Cards have `Margin=8,4,8,4` so swell overflows into margin without hitting ScrollContentPresenter clip
 
-### Step 9 — ViGEm + HidHide Controller Reordering
+### Step 9 — ViGEm + HidHide Controller Reordering (in progress)
 
-- `ViGEmController` wrapper in Core/Devices/
-- `HidHideService` wrapper in Core/Devices/
-- `InputForwardingService` as IHostedService — reads HID reports, writes to ViGEm at 125Hz
-- Drag-to-reorder UI (drag controller cards between Player Index slots)
-- Confirm dialog before applying any reorder
-- "Revert All" button — always visible when forwarding is active
+Core/Forwarding/ stack:
+- `ViGEmControllerPool` — creates and holds 4 virtual Xbox360 controllers on startup, keeps them connected, `AutoSubmitReport = false`
+- `HidHideService` — wraps HidHide COM/driver API: `AddToAllowlist(exePath)`, `HideDevice(instanceId)`, `ClearAll()`
+- `InputForwardingService` — runs a Stopwatch-based 125Hz loop (8ms target), reads XInput state for physical slots 0–3, writes to virtual slots according to `int[4] slotMap` where `slotMap[physicalSlot] = virtualSlot`
+- `IReorderService` — interface: `ApplyOrder(int[] newOrder)`, `RevertAll()`
+
+App wiring:
+- On app start, initialize forwarding with identity map (0→0, 1→1, 2→2, 3→3)
+- Reorder UI updates the slotMap
+- "Revert All" button resets to identity
+- No confirm dialog yet — just get forwarding working
 
 ### CRITICAL: HidHide crash safety
 On startup, ALWAYS call `HidHideService.ClearAllRules()` first. Never assume previous state is clean.
@@ -290,16 +295,25 @@ dotnet build src/ControlShift.Spike
 Strip \\?\, strip #{guid} suffix, replace # with \, uppercase.
 ```
 
-### Findings — TO BE FILLED IN AFTER RUNNING
+### Findings
 
-Run the spike and record results here:
-- [ ] ViGEm driver present on machine: ___
-- [ ] Virtual controllers created successfully: ___
-- [ ] Slot assignment: virtual[0] → XInput slot ___, virtual[1] → XInput slot ___
-- [ ] HidHide driver present: ___
-- [ ] HidHide allowlist: our process still reads physical controllers after hiding: ___
-- [ ] Forwarding loop actual Hz achieved: ___
-- [ ] Any errors or unexpected behavior: ___
+- [x] ViGEm driver present on machine: **YES** — ViGEmBus present and responsive
+- [x] Virtual controllers created successfully: **YES**
+- [x] Slot assignment: Windows assigns slots in connection order (ViGEm cannot request a specific XInput slot — `Xbox360UserIndexNotReportedException` confirms this)
+- [x] HidHide driver present: **YES** — v1.4.181.0
+- [x] HidHide allowlist: **working correctly** — our process still reads physical controllers after hiding
+- [x] Forwarding loop actual Hz achieved: **~61Hz** (target 125Hz — `Thread.Sleep(8)` is too coarse; loop needs Stopwatch-based sleep)
+- [x] Any errors or unexpected behavior: `Xbox360UserIndexNotReportedException` — cannot request a specific slot
+- [x] Cleanup: **works correctly** — physical controllers restored after disconnect
+
+**Verdict: SPIKE PASSED — proceed to Step 9**
+
+### Architecture implication from spike
+
+ViGEm cannot request a specific XInput slot — Windows assigns slots in connection order. Therefore the architecture must be:
+1. Hide ALL physical controllers via HidHide
+2. Create 4 virtual ViGEm controllers (they get slots 0–3 in connection order)
+3. Forward physical XInput input to virtual slots in user's preferred order
 
 ### Implications for Step 9 implementation
 

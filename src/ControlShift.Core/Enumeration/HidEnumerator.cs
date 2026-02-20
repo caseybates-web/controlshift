@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using HidSharp;
 
 namespace ControlShift.Core.Enumeration;
@@ -57,11 +58,23 @@ public sealed class HidEnumerator : IHidEnumerator
         foreach (var h in results)
             seenInstanceIds.Add(NormalizeToInstanceId(h.DevicePath));
 
-        foreach (var bleDevice in BleHidEnumerator.GetBleHidDevices())
+        var bleDevices = BleHidEnumerator.GetBleHidDevices();
+        Debug.WriteLine($"[HidEnum] BleHidEnumerator returned {bleDevices.Count} device(s):");
+        int bleAdded = 0;
+        foreach (var bleDevice in bleDevices)
         {
-            if (seenInstanceIds.Add(NormalizeToInstanceId(bleDevice.DevicePath)))
+            string norm = NormalizeToInstanceId(bleDevice.DevicePath);
+            bool isNew  = seenInstanceIds.Add(norm);
+            Debug.WriteLine($"[HidEnum]   BLE VID={bleDevice.Vid} PID={bleDevice.Pid} " +
+                            $"new={isNew} normId={norm}");
+            Debug.WriteLine($"[HidEnum]       path={bleDevice.DevicePath}");
+            if (isNew)
+            {
                 results.Add(bleDevice);
+                bleAdded++;
+            }
         }
+        Debug.WriteLine($"[HidEnum] {bleAdded} BLE device(s) added (not already in HidSharp results)");
 
         return results;
     }

@@ -1,3 +1,5 @@
+using ControlShift.Core.Forwarding;
+
 namespace ControlShift.App;
 
 /// <summary>
@@ -23,6 +25,32 @@ class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // CRITICAL: HidHide crash safety — always clear stale state on startup.
+        // If the previous run crashed while HidHide was active, physical controllers
+        // would be invisible to all apps until we clear the rules.
+        try
+        {
+            using var hidHide = new HidHideService();
+            if (hidHide.IsAvailable)
+                hidHide.ClearAll();
+        }
+        catch
+        {
+            // Best-effort — HidHide may not be installed
+        }
+
+        // Register crash handler to clear HidHide on unhandled exceptions.
+        AppDomain.CurrentDomain.UnhandledException += (_, _) =>
+        {
+            try
+            {
+                using var hidHide = new HidHideService();
+                if (hidHide.IsAvailable)
+                    hidHide.ClearAll();
+            }
+            catch { /* must not throw during crash */ }
+        };
+
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         Microsoft.UI.Xaml.Application.Start(p =>

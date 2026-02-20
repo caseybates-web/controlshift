@@ -48,12 +48,22 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Exit link -->
-        <HyperlinkButton Grid.Row="2"
-                         Content="Exit ControlShift"
-                         HorizontalAlignment="Center"
-                         Padding="16,14,16,20"
-                         Foreground="{StaticResource XbTextMutedBrush}"
-                         Click="ExitButton_Click" />
+        <!-- Footer: Revert All + Exit -->
+        <StackPanel Grid.Row="2" HorizontalAlignment="Center" Spacing="4" Padding="0,8,0,0">
+            <Button x:Name="RevertButton"
+                    Content="Revert All"
+                    HorizontalAlignment="Center"
+                    Padding="16,8"
+                    Background="#107C10"
+                    Foreground="White"
+                    CornerRadius="2"
+                    Visibility="Collapsed"
+                    Click="RevertButton_Click" />
+            <HyperlinkButton Content="Exit ControlShift"
+                             HorizontalAlignment="Center"
+                             Padding="16,10,16,16"
+                             Foreground="{StaticResource XbTextMutedBrush}"
+                             Click="ExitButton_Click" />
+        </StackPanel>
     </Grid>
 </Window>

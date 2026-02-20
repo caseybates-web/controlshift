@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -33,6 +34,33 @@ public sealed class PnpBusDetector : IPnpBusDetector
     private const string BleHogpGuid  = "{00001812-0000-1000-8000-00805f9b34fb}";
     // HID-over-GATT classic profile UUID (older Xbox One, most BT HID controllers)
     private const string BtHidGuid    = "{00001124-0000-1000-8000-00805f9b34fb}";
+
+    // ── Diagnostic logging ────────────────────────────────────────────────────
+
+    private static string DumpPath => System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(), "controlshift-pnpbus-dump.txt");
+
+    private static bool _dumpInitialized;
+    private static readonly object _dumpLock = new();
+
+    private static void DumpLog(string line)
+    {
+        Debug.WriteLine($"[PnpBus] {line}");
+        try
+        {
+            lock (_dumpLock)
+            {
+                if (!_dumpInitialized)
+                {
+                    System.IO.File.WriteAllText(DumpPath,
+                        $"ControlShift PnpBus dump — {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}\n\n");
+                    _dumpInitialized = true;
+                }
+                System.IO.File.AppendAllText(DumpPath, line + "\n");
+            }
+        }
+        catch { /* diagnostic writes must never throw */ }
+    }
 
     // ── CfgMgr32 P/Invoke ─────────────────────────────────────────────────────
 
@@ -72,40 +100,66 @@ public sealed class PnpBusDetector : IPnpBusDetector
 
     private BusType DetectBusTypeCore(string hidDevicePath)
     {
+        DumpLog($"--- DetectBusType ---");
+        DumpLog($"  path: {hidDevicePath}");
+
         // ── Fast path 1: BT service GUIDs embedded in the HID path ───────────
-        // These GUIDs appear in BLE HID paths (the HOGP profile UUID is in the
-        // path itself before the first #, making them reliable without a tree walk).
-        if (hidDevicePath.IndexOf(BleHogpGuid, StringComparison.OrdinalIgnoreCase) >= 0 ||
-            hidDevicePath.IndexOf(BtHidGuid,   StringComparison.OrdinalIgnoreCase) >= 0)
+        bool hasBleHogp = hidDevicePath.IndexOf(BleHogpGuid, StringComparison.OrdinalIgnoreCase) >= 0;
+        bool hasBtHid   = hidDevicePath.IndexOf(BtHidGuid,   StringComparison.OrdinalIgnoreCase) >= 0;
+        if (hasBleHogp || hasBtHid)
+        {
+            DumpLog($"  fast-path-1: BT GUID in path (hogp={hasBleHogp} bthid={hasBtHid}) → BluetoothLE");
             return BusType.BluetoothLE;
+        }
+        DumpLog($"  fast-path-1: no BT GUID in path");
 
         // ── Fast path 2: classify the path string directly ───────────────────
         var directResult = ClassifyInstanceId(hidDevicePath);
         if (directResult != BusType.Unknown)
+        {
+            DumpLog($"  fast-path-2: ClassifyInstanceId(path) → {directResult}");
             return directResult;
+        }
+        DumpLog($"  fast-path-2: ClassifyInstanceId(path) → Unknown, proceeding to tree walk");
 
         // ── CfgMgr32 tree walk ────────────────────────────────────────────────
         string instanceId = DevicePathToInstanceId(hidDevicePath);
+        DumpLog($"  instanceId: {instanceId}");
 
-        if (CM_Locate_DevNodeW(out uint devNode, instanceId, CM_FLAGS_NONE) != CR_SUCCESS)
+        int locateResult = CM_Locate_DevNodeW(out uint devNode, instanceId, CM_FLAGS_NONE);
+        if (locateResult != CR_SUCCESS)
+        {
+            DumpLog($"  CM_Locate_DevNodeW FAILED (cr=0x{locateResult:X}) → Unknown");
             return BusType.Unknown;
+        }
 
         for (int level = 0; level < MAX_PARENT_LEVELS; level++)
         {
             var sb = new StringBuilder(MAX_DEVICE_ID_LEN);
             if (CM_Get_Device_IDW(devNode, sb, (uint)sb.Capacity, CM_FLAGS_NONE) == CR_SUCCESS)
             {
-                var result = ClassifyInstanceId(sb.ToString());
+                string nodeId = sb.ToString();
+                var result    = ClassifyInstanceId(nodeId);
+                DumpLog($"  tree[{level}]: id={nodeId} → {result}");
                 if (result != BusType.Unknown)
                     return result;
             }
+            else
+            {
+                DumpLog($"  tree[{level}]: CM_Get_Device_IDW failed");
+            }
 
             // Walk up to parent.
-            if (CM_Get_Parent(out uint parent, devNode, CM_FLAGS_NONE) != CR_SUCCESS)
+            int parentResult = CM_Get_Parent(out uint parent, devNode, CM_FLAGS_NONE);
+            if (parentResult != CR_SUCCESS)
+            {
+                DumpLog($"  tree[{level}]: CM_Get_Parent FAILED (cr=0x{parentResult:X}) — stopping");
                 break;
+            }
             devNode = parent;
         }
 
+        DumpLog($"  tree walk exhausted → Unknown");
         return BusType.Unknown;
     }
 
