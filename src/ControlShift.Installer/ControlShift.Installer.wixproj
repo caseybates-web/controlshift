@@ -1,0 +1,19 @@
+<Project Sdk="WixToolset.Sdk/4.0.4">
+
+  <!--
+    DECISION: WiX 4 Burn bootstrapper bundles ViGEmBus + HidHide (Permanent=yes,
+    not removed on uninstall per CLAUDE.md) and the ControlShift MSI.
+    Build with: dotnet tool install - -global wix && dotnet build
+    Requires the app to be published first:
+      dotnet publish src/ControlShift.App -c Release -r win-x64 - -self-contained -o publish/
+  -->
+
+  <PropertyGroup>
+    <OutputType>Bundle</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Bal.wixext" Version="4.0.4" />
+  </ItemGroup>
+
+</Project>

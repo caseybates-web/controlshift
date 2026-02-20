@@ -2,7 +2,7 @@
 
 A lightweight Windows app that lets users see all connected controllers, identify them via rumble, and reorder their XInput Player Index assignments on gaming handhelds. Solves the problem where the integrated gamepad permanently holds Player 1, preventing Bluetooth controllers from being recognized by games that only poll the first controller.
 
-**Status:** Phase 2 Step 9 (forwarding stack) in progress.
+**Status:** Phase 3 complete — profiles, process watcher, anticheat, WiX installer.
 **Owner:** Hardware PdM managing e2e
 **License:** MIT (open source, public release)
 **Target:** Windows 10 (19041) minimum, Windows 11 supported
@@ -231,7 +231,7 @@ Allow the user to navigate cards and initiate reordering without a mouse.
 - Tab order (`TabIndex`) must match visual top-to-bottom order; rebuild after reorder
 - Cards have `Margin=8,4,8,4` so swell overflows into margin without hitting ScrollContentPresenter clip
 
-### Step 9 — ViGEm + HidHide Controller Reordering (in progress)
+### Step 9 — ViGEm + HidHide Controller Reordering ✓ (complete)
 
 Core/Forwarding/ stack:
 - `ViGEmControllerPool` — creates and holds 4 virtual Xbox360 controllers on startup, keeps them connected, `AutoSubmitReport = false`
@@ -324,22 +324,39 @@ ViGEm cannot request a specific XInput slot — Windows assigns slots in connect
 
 ---
 
-## Phase 3 — Per-Game Profiles
+## Phase 3 — Per-Game Profiles ✓ (complete)
 
-- WMI process watcher: `SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName = ?`
-- On game launch: silently apply matching profile
-- On game exit: silently revert
-- "Save Profile" button: auto-detect foreground EXE, save current slot layout
+### Profile Save/Load (PR #16)
+- ProfileStore: `%APPDATA%\ControlShift\profiles\{name}.json`
+- Profiles store VID:PID strings (stable across reconnects), resolved to device paths at apply time
+- ProfileResolver: VID:PID → current device paths, handles duplicates via claim tracking
+- Save Profile button: auto-detects foreground EXE, ContentDialog for name/exe
+- Profiles button: list/load/delete saved profiles
+
+### WMI Process Watcher + Anticheat Auto-Revert (PR B)
+- WMI: `Win32_ProcessStartTrace` / `Win32_ProcessStopTrace` for game launch/exit detection
+- Watches all exe names from saved profiles, fires events on WMI worker thread
+- Auto-apply: non-anticheat game launches → load matching profile → start forwarding
+- Auto-revert: game exits → stop forwarding
+- Anticheat safety: known anticheat game → STOP forwarding before game fully starts
+- `AntiCheatDatabase`: loads `devices/anticheat-games.json`, case-insensitive O(1) lookup
+- Warning dialog when saving profile for known anticheat game
+
+### WiX Installer (PR C)
+- WiX 4 Burn bootstrapper: ViGEmBus → HidHide → ControlShift MSI
+- `Permanent=yes` on drivers (not removed on uninstall)
+- Custom action on uninstall: `ControlShift.App.exe --cleanup` to clear HidHide rules
+- `release.yml`: tag push → build → GitHub Release with `ControlShift-Setup.exe`
 
 ---
 
-## Anticheat — Critical Constraint
+## Anticheat — Critical Constraint ✓ (implemented)
 
 EAC and BattlEye may block launch when virtual XInput devices are active.
 
-- Ship bundled `anticheat-games.json`
-- Call `RevertAll()` BEFORE anticheat game process fully starts
-- Show warning when saving a profile for a known anticheat game
+- Ship bundled `anticheat-games.json` ✓
+- Call `StopForwardingAsync()` BEFORE anticheat game process fully starts ✓
+- Show warning when saving a profile for a known anticheat game ✓
 
 ---
 

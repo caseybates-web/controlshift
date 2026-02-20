@@ -7,7 +7,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ControlShift.Core", "src\Co
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ControlShift.App", "src\ControlShift.App\ControlShift.App.csproj", "{A1B2C3D4-1111-2222-3333-444455557777}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ControlShift.Installer", "src\ControlShift.Installer\ControlShift.Installer.csproj", "{A1B2C3D4-1111-2222-3333-444455558888}"
+Project("{930C7802-8A8C-48F9-8165-68863BCCD9DD}") = "ControlShift.Installer", "src\ControlShift.Installer\ControlShift.Installer.wixproj", "{A1B2C3D4-1111-2222-3333-444455558888}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ControlShift.Core.Tests", "tests\ControlShift.Core.Tests\ControlShift.Core.Tests.csproj", "{A1B2C3D4-1111-2222-3333-444455559999}"
 EndProject
