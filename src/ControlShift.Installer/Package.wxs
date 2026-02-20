@@ -8,7 +8,7 @@
 
     <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" />
 
-    <Icon Id="controlshift.ico" SourceFile="$(var.HarvestPath)\Assets\controlshift.ico" />
+    <Icon Id="controlshift.ico" SourceFile="$(var.HarvestPath)Assets\controlshift.ico" />
     <Property Id="ARPPRODUCTICON" Value="controlshift.ico" />
 
     <Feature Id="Main">
@@ -17,5 +17,11 @@
     </Feature>
 
   </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.HarvestPath)**" />
+    </ComponentGroup>
+  </Fragment>
 
 </Wix>

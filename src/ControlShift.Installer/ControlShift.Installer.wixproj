@@ -3,25 +3,19 @@
   <PropertyGroup>
     <OutputType>Package</OutputType>
     <InstallerPlatform>x64</InstallerPlatform>
+    <!-- .NET self-contained DLLs have language metadata too long for MSI File table. -->
+    <SuppressValidation>true</SuppressValidation>
   </PropertyGroup>
 
-  <!-- Version: defaults to 0.0.1 for local dev; CI passes the real version from the git tag. -->
   <PropertyGroup>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.1</ProductVersion>
-    <DefineConstants>ProductVersion=$(ProductVersion);HarvestPath=$(HarvestPath)</DefineConstants>
-  </PropertyGroup>
-
-  <PropertyGroup>
+    <!-- Default HarvestPath matches CI output (Platform=x64). Override for local builds. -->
     <HarvestPath Condition="'$(HarvestPath)' == ''">$(MSBuildThisFileDirectory)..\ControlShift.App\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\</HarvestPath>
+    <DefineConstants>ProductVersion=$(ProductVersion);HarvestPath=$(HarvestPath)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <BindPath Include="$(HarvestPath)" />
   </ItemGroup>
-
-  <!-- Run wix heat to generate AppFiles.wxs from the app build output before compiling. -->
-  <Target Name="HarvestAppFiles" BeforeTargets="Build">
-    <Exec Command="dotnet tool run wix -- heat dir &quot;$(HarvestPath).&quot; -o &quot;$(MSBuildProjectDirectory)\AppFiles.wxs&quot; -cg AppFiles -dr INSTALLFOLDER -srd -sreg -ag -sfrag" />
-  </Target>
 
 </Project>

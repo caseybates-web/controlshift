@@ -50,7 +50,7 @@
 
       <!-- ControlShift MSI — hardcoded path to avoid preprocessor variable issues. -->
       <MsiPackage Id="ControlShift"
-                  SourceFile="..\ControlShift.Installer\bin\x64\Release\ControlShift.Installer.msi" />
+                  SourceFile="..\ControlShift.Installer\bin\x64\Release\en-US\ControlShift.Installer.msi" />
     </Chain>
 
   </Bundle>
