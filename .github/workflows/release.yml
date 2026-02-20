@@ -73,7 +73,7 @@ jobs:
         /p:ProductVersion=${{ env.VERSION }}
         /restore
 
-    # 3) Build the WiX Burn bundle (chains drivers + MSI via hardcoded path).
+    # 3) Build the WiX Burn bundle (chains drivers + MSI).
     - name: Build Bundle
       run: >
         msbuild src/ControlShift.Bundle/ControlShift.Bundle.wixproj
@@ -82,11 +82,13 @@ jobs:
         /p:ProductVersion=${{ env.VERSION }}
         /restore
 
+    # Locate the bundle exe and rename for release.
     - name: Prepare release asset
       shell: bash
       run: |
-        cp "src/ControlShift.Bundle/bin/x64/Release/ControlShift.Bundle.exe" \
-           "ControlShift-Setup-${{ env.VERSION }}.exe"
+        BUNDLE_EXE=$(find src/ControlShift.Bundle/bin -name "ControlShift.Bundle.exe" -type f | head -1)
+        echo "Found bundle at: $BUNDLE_EXE"
+        cp "$BUNDLE_EXE" "ControlShift-Setup-${{ env.VERSION }}.exe"
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
