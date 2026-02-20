@@ -70,7 +70,9 @@ public sealed class InputForwardingService : IInputForwardingService
                     _hidHide.HideDevice(instanceId);
 
                     // 3. Open the HID device for reading.
-                    var hidDevice = DeviceList.Local.GetHidDeviceOrNull(assignment.SourceDevicePath);
+                    var hidDevice = DeviceList.Local.GetHidDevices()
+                        .FirstOrDefault(d => string.Equals(d.DevicePath, assignment.SourceDevicePath,
+                            StringComparison.OrdinalIgnoreCase));
                     if (hidDevice is null)
                     {
                         vigem.Dispose();
