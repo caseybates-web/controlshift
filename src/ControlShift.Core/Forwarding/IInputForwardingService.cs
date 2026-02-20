@@ -20,6 +20,12 @@ public interface IInputForwardingService : IDisposable
     /// <summary>The currently active slot assignments, or empty if not forwarding.</summary>
     IReadOnlyList<SlotAssignment> ActiveAssignments { get; }
 
+    /// <summary>
+    /// XInput slot indices occupied by ViGEm virtual controllers.
+    /// Populated after <see cref="StartForwardingAsync"/> completes; empty when not forwarding.
+    /// </summary>
+    IReadOnlySet<int> VirtualSlotIndices { get; }
+
     /// <summary>Raised when a forwarding channel encounters an error.</summary>
     event EventHandler<ForwardingErrorEventArgs>? ForwardingError;
 }

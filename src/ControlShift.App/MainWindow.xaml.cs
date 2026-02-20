@@ -452,7 +452,11 @@ public sealed partial class MainWindow : Window
                 });
             }
             await _forwardingService.StartForwardingAsync(assignments);
-            NavLog("[Forwarding] Started — per-device HID forwarding active");
+
+            // Tell the ViewModel which XInput slots are virtual so they're excluded
+            // from UI enumeration (prevents "Unknown Controller USB" ghost cards).
+            _viewModel.ExcludedSlotIndices = _forwardingService.VirtualSlotIndices;
+            NavLog($"[Forwarding] Started — virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
             if (RevertButton is not null)
                 RevertButton.Visibility = Visibility.Visible;
         }
@@ -467,6 +471,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await _forwardingService.StopForwardingAsync();
+            _viewModel.ExcludedSlotIndices = new HashSet<int>();
             _slotOrderStore.Clear();
             NavLog("[Forwarding] Stopped — reverted to physical order, cleared saved order");
             if (RevertButton is not null)

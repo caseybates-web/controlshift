@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Nefarius.Drivers.HidHide;
 
 namespace ControlShift.Core.Devices;
@@ -36,11 +37,22 @@ public sealed class HidHideService : IHidHideService
 
     public void HideDevice(string deviceInstanceId)
     {
-        _service.AddBlockedInstanceId(deviceInstanceId);
+        Debug.WriteLine($"[HidHide] HideDevice — instanceId='{deviceInstanceId}'");
+        try
+        {
+            _service.AddBlockedInstanceId(deviceInstanceId);
+            Debug.WriteLine($"[HidHide] HideDevice — SUCCESS for '{deviceInstanceId}'");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[HidHide] HideDevice — FAILED for '{deviceInstanceId}': {ex.Message}");
+            throw;
+        }
     }
 
     public void UnhideDevice(string deviceInstanceId)
     {
+        Debug.WriteLine($"[HidHide] UnhideDevice — instanceId='{deviceInstanceId}'");
         _service.RemoveBlockedInstanceId(deviceInstanceId);
     }
 

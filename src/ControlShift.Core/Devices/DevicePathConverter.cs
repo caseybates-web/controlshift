@@ -36,6 +36,7 @@ public static class DevicePathConverter
         // Replace # separators with \.
         path = path.Replace('#', '\\');
 
-        return path;
+        // HidHide expects uppercase instance IDs (matches Windows Device Manager format).
+        return path.ToUpperInvariant();
     }
 }

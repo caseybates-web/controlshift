@@ -19,12 +19,14 @@ public sealed class InputForwardingService : IInputForwardingService
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<ForwardingPair> _pairs = new();
     private readonly List<SlotAssignment> _activeAssignments = new();
+    private readonly HashSet<int> _virtualSlotIndices = new();
 
     private ViGEmClient? _vigemClient;
     private int _errorCount;
 
     public bool IsForwarding => _pairs.Count > 0;
     public IReadOnlyList<SlotAssignment> ActiveAssignments => _activeAssignments.AsReadOnly();
+    public IReadOnlySet<int> VirtualSlotIndices => _virtualSlotIndices;
 
     public event EventHandler<ForwardingErrorEventArgs>? ForwardingError;
 
@@ -42,6 +44,7 @@ public sealed class InputForwardingService : IInputForwardingService
                 throw new InvalidOperationException("Forwarding is already active. Call StopForwardingAsync first.");
 
             _errorCount = 0;
+            _virtualSlotIndices.Clear();
 
             // Create the ViGEmBus client (shared for all virtual controllers).
             _vigemClient = new ViGEmClient();
@@ -64,6 +67,10 @@ public sealed class InputForwardingService : IInputForwardingService
                     // 1. Create ViGEm virtual controller.
                     var vigem = new ViGEmController(_vigemClient);
                     vigem.Connect();
+
+                    // Track which XInput slot this virtual controller landed on.
+                    if (vigem.UserIndex >= 0)
+                        _virtualSlotIndices.Add(vigem.UserIndex);
 
                     // 2. Hide the physical device.
                     string instanceId = DevicePathConverter.ToInstanceId(assignment.SourceDevicePath);
@@ -118,6 +125,7 @@ public sealed class InputForwardingService : IInputForwardingService
                     try { pair.Dispose(); } catch { /* best effort */ }
                 }
 
+                _virtualSlotIndices.Clear();
                 _hidHide.ClearAllRules();
                 _vigemClient?.Dispose();
                 _vigemClient = null;
@@ -150,6 +158,7 @@ public sealed class InputForwardingService : IInputForwardingService
             _vigemClient = null;
 
             _activeAssignments.Clear();
+            _virtualSlotIndices.Clear();
         }
         finally
         {
@@ -182,6 +191,7 @@ public sealed class InputForwardingService : IInputForwardingService
 
         _vigemClient?.Dispose();
         _vigemClient = null;
+        _virtualSlotIndices.Clear();
 
         _gate.Dispose();
     }
