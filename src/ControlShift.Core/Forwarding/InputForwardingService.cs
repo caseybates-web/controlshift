@@ -35,6 +35,9 @@ public sealed class InputForwardingService : IDisposable
         {
             Array.Copy(newMap, _slotMap, 4);
         }
+        Debug.WriteLine($"[InputForwarding] SlotMap updated: " +
+                        $"phys0→virt{newMap[0]}, phys1→virt{newMap[1]}, " +
+                        $"phys2→virt{newMap[2]}, phys3→virt{newMap[3]}");
     }
 
     /// <summary>Gets a copy of the current slot map.</summary>

@@ -55,20 +55,29 @@ public sealed class ReorderService : IReorderService
         _pool = new ViGEmControllerPool();
         _pool.Connect();
 
+        Debug.WriteLine($"[ReorderService] ViGEm pool connected. Virtual slot indices: " +
+                        $"[{string.Join(", ", _pool.VirtualSlotIndices)}]");
+
         // 3. Start forwarding with identity map
         _forwarding = new InputForwardingService(_pool);
         _forwarding.SetSlotMap(IdentityMap);
         _forwarding.Start();
+
+        Debug.WriteLine("[ReorderService] Forwarding started with identity map");
     }
 
     public void ApplyOrder(int[] newOrder)
     {
         if (newOrder.Length != 4) throw new ArgumentException("Order must have exactly 4 entries.");
+        Debug.WriteLine($"[ReorderService] ApplyOrder: " +
+                        $"phys0→virt{newOrder[0]}, phys1→virt{newOrder[1]}, " +
+                        $"phys2→virt{newOrder[2]}, phys3→virt{newOrder[3]}");
         _forwarding?.SetSlotMap(newOrder);
     }
 
     public void RevertAll()
     {
+        Debug.WriteLine("[ReorderService] RevertAll → identity map");
         _forwarding?.SetSlotMap(IdentityMap);
     }
 

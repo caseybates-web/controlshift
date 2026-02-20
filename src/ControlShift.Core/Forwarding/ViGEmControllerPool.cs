@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
@@ -60,6 +61,10 @@ public sealed class ViGEmControllerPool : IDisposable
             if (!preSlots.Contains((int)i) && XInput.GetState(i, out _))
                 _virtualSlotIndices.Add((int)i);
         }
+
+        Debug.WriteLine($"[ViGEmPool] Connected 4 virtual controllers. " +
+                        $"Pre-existing slots: [{string.Join(", ", preSlots.OrderBy(x => x))}] " +
+                        $"Virtual slots: [{string.Join(", ", _virtualSlotIndices.OrderBy(x => x))}]");
     }
 
     /// <summary>Gets the virtual controller at the given index (0–3).</summary>
