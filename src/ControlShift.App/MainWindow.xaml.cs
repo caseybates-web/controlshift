@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
     private readonly IInputForwardingService _forwardingService;
     private readonly IProfileStore   _profileStore;
     private readonly SlotOrderStore  _slotOrderStore = new();
+    private readonly NicknameStore   _nicknameStore  = new();
 
     // ── Process watcher + anticheat ─────────────────────────────────────────
 
@@ -244,6 +245,7 @@ public sealed partial class MainWindow : Window
             RebuildCardsFromPanel();
             for (int i = 0; i < _cards.Count && i < _viewModel.Slots.Count; i++)
                 _cards[i].SetSlot(_viewModel.Slots[i]);
+            ApplyNicknames();
             return;
         }
 
@@ -251,6 +253,8 @@ public sealed partial class MainWindow : Window
 
         for (int i = 0; i < _cards.Count && i < _viewModel.Slots.Count; i++)
             _cards[i].SetSlot(_viewModel.Slots[i]);
+
+        ApplyNicknames();
 
         // After cards have data, reorder to match the user's saved preferred order.
         ApplySavedOrder();
@@ -274,8 +278,9 @@ public sealed partial class MainWindow : Window
         while (_cards.Count < count)
         {
             var card = new SlotCard { Margin = new Thickness(8, 4, 8, 4) };
-            card.GotFocus  += (_, _) => OnElementGotFocus(card);
-            card.LostFocus += (_, _) => OnElementLostFocus(card);
+            card.GotFocus        += (_, _) => OnElementGotFocus(card);
+            card.LostFocus       += (_, _) => OnElementLostFocus(card);
+            card.NicknameChanged += OnCardNicknameChanged;
             _cards.Add(card);
             SlotPanel.Children.Add(card);
         }
@@ -299,6 +304,35 @@ public sealed partial class MainWindow : Window
     {
         for (int i = 0; i < _cards.Count; i++)
             _cards[i].TabIndex = i;
+    }
+
+    // ── Nicknames ───────────────────────────────────────────────────────────
+
+    /// <summary>Applies saved nicknames to all slot view models after a refresh.</summary>
+    private void ApplyNicknames()
+    {
+        for (int i = 0; i < _cards.Count && i < _viewModel.Slots.Count; i++)
+        {
+            var slot = _viewModel.Slots[i];
+            if (!string.IsNullOrEmpty(slot.VidPid))
+                slot.Nickname = _nicknameStore.GetNickname(slot.VidPid) ?? string.Empty;
+        }
+    }
+
+    private void OnCardNicknameChanged(object? sender, string newNickname)
+    {
+        if (sender is not SlotCard card) return;
+        var vidPid = card.VidPid;
+        if (string.IsNullOrEmpty(vidPid)) return;
+
+        _nicknameStore.SetNickname(vidPid, newNickname);
+
+        // Update the view model so the card display refreshes immediately.
+        var slot = _viewModel.Slots.FirstOrDefault(s => s.VidPid == vidPid);
+        if (slot is not null)
+            slot.Nickname = newNickname;
+
+        NavLog($"[Nickname] Set '{vidPid}' → '{newNickname}'");
     }
 
     /// <summary>
