@@ -12,6 +12,8 @@ using ControlShift.App.ViewModels;
 using ControlShift.Core.Devices;
 using ControlShift.Core.Enumeration;
 using ControlShift.Core.Forwarding;
+using ControlShift.Core.Models;
+using ControlShift.Core.Profiles;
 
 namespace ControlShift.App;
 
@@ -46,6 +48,7 @@ public sealed partial class MainWindow : Window
     // ── Forwarding stack ─────────────────────────────────────────────────────
 
     private readonly IInputForwardingService _forwardingService;
+    private readonly IProfileStore   _profileStore;
     private readonly SlotOrderStore  _slotOrderStore = new();
 
     // ── Navigation state ──────────────────────────────────────────────────────
@@ -99,10 +102,11 @@ public sealed partial class MainWindow : Window
 
     // ── Construction ──────────────────────────────────────────────────────────
 
-    public MainWindow(IInputForwardingService forwardingService)
+    public MainWindow(IInputForwardingService forwardingService, IProfileStore profileStore)
     {
         _forwardingService = forwardingService;
         _forwardingService.ForwardingError += OnForwardingError;
+        _profileStore = profileStore;
 
         InitializeComponent();
 
@@ -182,10 +186,14 @@ public sealed partial class MainWindow : Window
         NavLog("OnContentGridLoaded — wiring focus events on footer buttons");
 
         // Wire focus tracking on footer buttons (cards are wired dynamically in EnsureCards).
-        RevertButton.GotFocus  += (_, _) => OnElementGotFocus(RevertButton);
-        RevertButton.LostFocus += (_, _) => OnElementLostFocus(RevertButton);
-        ExitButton.GotFocus    += (_, _) => OnElementGotFocus(ExitButton);
-        ExitButton.LostFocus   += (_, _) => OnElementLostFocus(ExitButton);
+        RevertButton.GotFocus       += (_, _) => OnElementGotFocus(RevertButton);
+        RevertButton.LostFocus      += (_, _) => OnElementLostFocus(RevertButton);
+        SaveProfileButton.GotFocus  += (_, _) => OnElementGotFocus(SaveProfileButton);
+        SaveProfileButton.LostFocus += (_, _) => OnElementLostFocus(SaveProfileButton);
+        ProfilesButton.GotFocus     += (_, _) => OnElementGotFocus(ProfilesButton);
+        ProfilesButton.LostFocus    += (_, _) => OnElementLostFocus(ProfilesButton);
+        ExitButton.GotFocus         += (_, _) => OnElementGotFocus(ExitButton);
+        ExitButton.LostFocus        += (_, _) => OnElementLostFocus(ExitButton);
 
         // Per-device forwarding is started on-demand via ApplyForwardingAsync()
         // when the user confirms a reorder. No upfront initialization needed.
@@ -273,6 +281,8 @@ public sealed partial class MainWindow : Window
 
         if (RevertButton.Visibility == Visibility.Visible)
             elements.Add(RevertButton);
+        elements.Add(SaveProfileButton);
+        elements.Add(ProfilesButton);
         elements.Add(ExitButton);
 
         return elements;
@@ -357,6 +367,240 @@ public sealed partial class MainWindow : Window
             if (!_forwardingService.IsForwarding && RevertButton is not null)
                 RevertButton.Visibility = Visibility.Collapsed;
         });
+    }
+
+    // ── Profiles ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// P/Invoke helpers for detecting the foreground application's EXE name.
+    /// Used by "Save Profile" to auto-populate the game exe field.
+    /// </summary>
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    private static string? GetForegroundExeName()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return null;
+            GetWindowThreadProcessId(hwnd, out uint pid);
+            if (pid == 0) return null;
+            var proc = Process.GetProcessById((int)pid);
+            return Path.GetFileName(proc.MainModule?.FileName);
+        }
+        catch { return null; }
+    }
+
+    private async void SaveProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Auto-detect foreground EXE (likely the game the user wants to profile).
+            // Note: ControlShift itself will often be the foreground app, so this is
+            // a best-effort hint that the user can override.
+            string? detectedExe = GetForegroundExeName();
+            string defaultName = detectedExe is not null
+                ? Path.GetFileNameWithoutExtension(detectedExe)
+                : "New Profile";
+
+            // Build a simple dialog for profile name and game exe.
+            var nameBox = new TextBox
+            {
+                Text = defaultName,
+                PlaceholderText = "Profile name",
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            var exeBox = new TextBox
+            {
+                Text = detectedExe ?? string.Empty,
+                PlaceholderText = "Game executable (e.g. game.exe) — optional",
+            };
+
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock { Text = "Profile Name:", Margin = new Thickness(0, 0, 0, 4) });
+            panel.Children.Add(nameBox);
+            panel.Children.Add(new TextBlock { Text = "Game Executable:", Margin = new Thickness(0, 8, 0, 4) });
+            panel.Children.Add(exeBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "Save Profile",
+                Content = panel,
+                PrimaryButtonText = "Save",
+                CloseButtonText = "Cancel",
+                XamlRoot = Content.XamlRoot,
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary) return;
+
+            string profileName = nameBox.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(profileName)) return;
+
+            string? gameExe = string.IsNullOrWhiteSpace(exeBox.Text) ? null : exeBox.Text.Trim();
+
+            // Build profile from current card order using VID:PID.
+            var slotAssignments = new string?[4];
+            for (int i = 0; i < _cards.Count && i < 4; i++)
+            {
+                var vidPid = _cards[i].VidPid;
+                slotAssignments[i] = string.IsNullOrEmpty(vidPid) ? null : vidPid;
+            }
+
+            var profile = new Profile
+            {
+                ProfileName = profileName,
+                GameExe = gameExe,
+                SlotAssignments = slotAssignments,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+
+            _profileStore.Save(profile);
+            NavLog($"[Profile] Saved: {profileName} (exe={gameExe ?? "none"})");
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[Profile] Save failed: {ex.Message}");
+        }
+    }
+
+    private async void ProfilesButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var profiles = _profileStore.LoadAll();
+
+            if (profiles.Count == 0)
+            {
+                var emptyDialog = new ContentDialog
+                {
+                    Title = "Profiles",
+                    Content = "No saved profiles. Reorder your controllers, then tap \"Save Profile\" to create one.",
+                    CloseButtonText = "OK",
+                    XamlRoot = Content.XamlRoot,
+                };
+                await emptyDialog.ShowAsync();
+                return;
+            }
+
+            // Build a simple list of profile names for selection.
+            var listView = new ListView
+            {
+                SelectionMode = ListViewSelectionMode.Single,
+                MaxHeight = 300,
+            };
+            foreach (var p in profiles)
+            {
+                string label = p.ProfileName;
+                if (p.GameExe is not null)
+                    label += $" ({p.GameExe})";
+                listView.Items.Add(label);
+            }
+            if (listView.Items.Count > 0)
+                listView.SelectedIndex = 0;
+
+            var dialog = new ContentDialog
+            {
+                Title = "Load Profile",
+                Content = listView,
+                PrimaryButtonText = "Load",
+                SecondaryButtonText = "Delete",
+                CloseButtonText = "Cancel",
+                XamlRoot = Content.XamlRoot,
+            };
+
+            var result = await dialog.ShowAsync();
+            int selectedIdx = listView.SelectedIndex;
+            if (selectedIdx < 0 || selectedIdx >= profiles.Count) return;
+
+            var selected = profiles[selectedIdx];
+
+            if (result == ContentDialogResult.Primary)
+            {
+                await LoadProfileAsync(selected);
+            }
+            else if (result == ContentDialogResult.Secondary)
+            {
+                _profileStore.Delete(selected.ProfileName);
+                NavLog($"[Profile] Deleted: {selected.ProfileName}");
+            }
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[Profile] Load/delete failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Resolves a profile's VID:PID assignments to current device paths,
+    /// reorders the cards to match, and starts forwarding.
+    /// </summary>
+    private async Task LoadProfileAsync(Profile profile)
+    {
+        try
+        {
+            // Build connected-controller tuples from current cards.
+            var connected = _cards
+                .Select(c => (VidPid: c.VidPid, DevicePath: c.DevicePath))
+                .Where(t => !string.IsNullOrEmpty(t.VidPid))
+                .ToList();
+
+            var assignments = ProfileResolver.Resolve(profile, connected);
+
+            // Reorder _cards to match profile's slot order.
+            // For each assignment that resolved a device path, find the matching card.
+            _suppressFocusEvents = true;
+            try
+            {
+                var newOrder = new List<SlotCard>();
+                var remaining = new List<SlotCard>(_cards);
+
+                foreach (var assignment in assignments)
+                {
+                    if (assignment.SourceDevicePath is null) continue;
+
+                    var match = remaining.FirstOrDefault(c =>
+                        string.Equals(c.DevicePath, assignment.SourceDevicePath,
+                            StringComparison.OrdinalIgnoreCase));
+
+                    if (match is not null)
+                    {
+                        newOrder.Add(match);
+                        remaining.Remove(match);
+                    }
+                }
+
+                // Append any remaining cards that weren't in the profile.
+                newOrder.AddRange(remaining);
+
+                // Apply new visual order.
+                SlotPanel.Children.Clear();
+                _cards.Clear();
+                _cards.AddRange(newOrder);
+                foreach (var card in _cards)
+                    SlotPanel.Children.Add(card);
+
+                for (int i = 0; i < _cards.Count; i++)
+                    _cards[i].TabIndex = i;
+            }
+            finally
+            {
+                _suppressFocusEvents = false;
+            }
+
+            // Start forwarding with the new order.
+            await ApplyForwardingAsync();
+            SaveCurrentOrder();
+            NavLog($"[Profile] Loaded: {profile.ProfileName}");
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[Profile] Load failed: {ex.Message}");
+        }
     }
 
     // ── Order persistence ────────────────────────────────────────────────────
@@ -569,6 +813,8 @@ public sealed partial class MainWindow : Window
     private void ActivateButton(Button btn)
     {
         if (btn == RevertButton) RevertButton_Click(btn, new RoutedEventArgs());
+        else if (btn == SaveProfileButton) SaveProfileButton_Click(btn, new RoutedEventArgs());
+        else if (btn == ProfilesButton) ProfilesButton_Click(btn, new RoutedEventArgs());
         else if (btn == ExitButton) ExitButton_Click(btn, new RoutedEventArgs());
     }
 
@@ -921,6 +1167,8 @@ public sealed partial class MainWindow : Window
     private void UpdateButtonFocusVisuals()
     {
         ApplyButtonFocusVisual(RevertButton, ReferenceEquals(_focusedElement, RevertButton));
+        ApplyButtonFocusVisual(SaveProfileButton, ReferenceEquals(_focusedElement, SaveProfileButton));
+        ApplyButtonFocusVisual(ProfilesButton, ReferenceEquals(_focusedElement, ProfilesButton));
         ApplyButtonFocusVisual(ExitButton, ReferenceEquals(_focusedElement, ExitButton));
     }
 

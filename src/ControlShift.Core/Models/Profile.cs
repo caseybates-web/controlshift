@@ -16,7 +16,10 @@ public sealed class Profile
     public string? GamePath { get; set; }
 
     /// <summary>
-    /// Ordered device identifiers for P1–P4. Each element is a device path or null (empty slot).
+    /// Ordered VID:PID identifiers for P1–P4 (e.g. "045E:02FD").
+    /// Each element is a VID:PID string or null (empty slot).
+    /// At apply time, VID:PID is resolved to the current device path via
+    /// <see cref="ControlShift.Core.Profiles.ProfileResolver"/>.
     /// Array always has exactly 4 elements. Setting a shorter array pads with nulls;
     /// setting a longer array truncates to 4.
     /// </summary>
