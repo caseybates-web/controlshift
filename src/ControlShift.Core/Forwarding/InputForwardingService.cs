@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using HidSharp;
 using Nefarius.ViGEm.Client;
+using Vortice.XInput;
 using ControlShift.Core.Devices;
 using ControlShift.Core.Models;
 
@@ -14,9 +15,19 @@ namespace ControlShift.Core.Forwarding;
 /// ViGEm controllers are connected ONCE and persisted across stop/start cycles.
 /// Only <see cref="RevertAllAsync"/> and <see cref="Dispose"/> disconnect them.
 /// This prevents WM_DEVICECHANGE chime loops caused by ViGEm connect/disconnect.
+///
+/// Virtual slot detection uses a before/after XInput snapshot to identify which
+/// slots were added by ViGEm. On pool reuse, cached values are kept.
+///
+/// IMPORTANT: ViGEm's UserIndex reports the internal connection order (0-based),
+/// NOT the actual XInput slot assigned by Windows. Do not use UserIndex for
+/// virtual slot detection — use XInput GetState() snapshots instead.
 /// </remarks>
 public sealed class InputForwardingService : IInputForwardingService
 {
+    private static readonly string DiagPath =
+        Path.Combine(Path.GetTempPath(), "controlshift-forwarding-diag.txt");
+
     private readonly IHidHideService _hidHide;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<ForwardingPair> _pairs = new();
@@ -39,11 +50,21 @@ public sealed class InputForwardingService : IInputForwardingService
         _hidHide = hidHide;
     }
 
+    private static void DiagLog(string msg)
+    {
+        var line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n";
+        Debug.Write(line);
+        try { File.AppendAllText(DiagPath, line); } catch { }
+    }
+
     public async Task StartForwardingAsync(IReadOnlyList<SlotAssignment> assignments)
     {
         await _gate.WaitAsync();
         try
         {
+            // Clear diagnostic file on each start.
+            try { File.WriteAllText(DiagPath, ""); } catch { }
+
             if (IsForwarding)
                 throw new InvalidOperationException("Forwarding is already active. Call StopForwardingAsync first.");
 
@@ -51,31 +72,109 @@ public sealed class InputForwardingService : IInputForwardingService
 
             // Count how many non-null assignments need a ViGEm controller.
             int neededCount = assignments.Count(a => a.SourceDevicePath is not null);
+            DiagLog($"Needed ViGEm count: {neededCount}, pool size: {_vigemPool.Count}");
 
             // Create ViGEm pool on first call; grow if more controllers are needed.
             bool firstInit = _vigemClient == null;
+            int poolStartSize = _vigemPool.Count;
+            bool poolGrew = false;
+
+            // Snapshot XInput slots BEFORE ViGEm connects.
+            // Any slot occupied now is a REAL controller — never treat it as virtual.
+            HashSet<int>? preVigemSlots = null;
+            if (_vigemPool.Count < neededCount)
+            {
+                preVigemSlots = SnapshotOccupiedXInputSlots();
+                DiagLog($"Pre-ViGEm occupied slots: [{string.Join(", ", preVigemSlots)}]");
+            }
+
             if (firstInit)
             {
                 _vigemClient = new ViGEmClient();
-                Debug.WriteLine("[Forwarding] Created ViGEmClient (first init)");
+                DiagLog("Created ViGEmClient (first init)");
             }
 
             // Grow pool to match needed count (never shrink — reuse existing).
-            int poolStartSize = _vigemPool.Count;
-            while (_vigemPool.Count < neededCount)
+            // Connect() with retry — driver may need time to assign slots.
+            try
             {
-                var vigem = new ViGEmController(_vigemClient!);
-                vigem.Connect();
-                _vigemPool.Add(vigem);
-                Debug.WriteLine($"[Forwarding] ViGEm pool: connected controller #{_vigemPool.Count} (slot {vigem.UserIndex})");
+                while (_vigemPool.Count < neededCount)
+                {
+                    var vigem = new ViGEmController(_vigemClient!);
+                    bool connected = false;
+                    for (int attempt = 0; attempt < 5; attempt++)
+                    {
+                        try
+                        {
+                            if (attempt > 0)
+                                await Task.Delay(300 * attempt);
+                            vigem.Connect();
+                            connected = true;
+                            DiagLog($"ViGEm Connect() succeeded on attempt {attempt + 1}");
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            DiagLog($"ViGEm Connect() attempt {attempt + 1}/5 failed: {ex.GetType().Name}");
+                            try { vigem.Disconnect(); } catch { }
+                        }
+                    }
+
+                    if (!connected)
+                    {
+                        vigem.Dispose();
+                        throw new InvalidOperationException(
+                            "ViGEm failed to assign an XInput slot after 5 attempts.");
+                    }
+
+                    _vigemPool.Add(vigem);
+                    poolGrew = true;
+                    DiagLog($"ViGEm pool: connected controller #{_vigemPool.Count}");
+                }
+            }
+            catch
+            {
+                // Clean up any controllers added during this failed growth attempt.
+                for (int i = _vigemPool.Count - 1; i >= poolStartSize; i--)
+                {
+                    try { _vigemPool[i].Disconnect(); _vigemPool[i].Dispose(); } catch { }
+                }
+                _vigemPool.RemoveRange(poolStartSize, _vigemPool.Count - poolStartSize);
+
+                if (firstInit && _vigemPool.Count == 0)
+                {
+                    _vigemClient?.Dispose();
+                    _vigemClient = null;
+                }
+                _virtualSlotIndices.Clear();
+                throw;
             }
 
-            // Rebuild virtual slot indices from pool.
-            _virtualSlotIndices.Clear();
-            foreach (var v in _vigemPool)
+            // Detect virtual slots via before/after XInput snapshot.
+            // Virtual = slots that appeared AFTER ViGEm connected.
+            // NOTE: Do NOT use ViGEm UserIndex — it reports internal connection order,
+            // not the actual XInput slot assigned by Windows.
+            if (preVigemSlots is not null && poolGrew)
             {
-                if (v.UserIndex >= 0)
-                    _virtualSlotIndices.Add(v.UserIndex);
+                // Wait for Windows to register new ViGEm device nodes in XInput.
+                await Task.Delay(300);
+
+                var postVigemSlots = SnapshotOccupiedXInputSlots();
+                DiagLog($"Post-ViGEm occupied slots: [{string.Join(", ", postVigemSlots)}]");
+
+                _virtualSlotIndices.Clear();
+                foreach (var slot in postVigemSlots)
+                {
+                    if (!preVigemSlots.Contains(slot))
+                        _virtualSlotIndices.Add(slot);
+                }
+                DiagLog($"Virtual slots (snapshot diff): [{string.Join(", ", _virtualSlotIndices)}]");
+            }
+            else if (!poolGrew)
+            {
+                // Pool reuse with no growth: cached values are correct.
+                // ViGEm controllers are persistent and their slots don't change.
+                DiagLog($"Virtual slots (cached): [{string.Join(", ", _virtualSlotIndices)}]");
             }
 
             // Whitelist our own process so we can still see hidden devices.
@@ -83,7 +182,7 @@ public sealed class InputForwardingService : IInputForwardingService
                 ?? Process.GetCurrentProcess().MainModule?.FileName;
             if (exePath is not null)
             {
-                Debug.WriteLine($"[Forwarding] HidHide allowlist: {exePath}");
+                DiagLog($"HidHide allowlist: {exePath}");
                 _hidHide.AddApplicationRule(exePath);
             }
 
@@ -102,9 +201,7 @@ public sealed class InputForwardingService : IInputForwardingService
 
                     // Hide the physical device via HidHide.
                     string instanceId = DevicePathConverter.ToInstanceId(assignment.SourceDevicePath);
-                    Debug.WriteLine($"[Forwarding] HidHide: hiding device for slot {assignment.TargetSlot}");
-                    Debug.WriteLine($"[Forwarding]   HidSharp path: {assignment.SourceDevicePath}");
-                    Debug.WriteLine($"[Forwarding]   Instance ID:   {instanceId}");
+                    DiagLog($"HidHide: slot {assignment.TargetSlot} → {instanceId}");
                     _hidHide.HideDevice(instanceId);
 
                     // Open the HID device for reading.
@@ -117,15 +214,7 @@ public sealed class InputForwardingService : IInputForwardingService
                             $"HID device not found for path: {assignment.SourceDevicePath}");
                     }
 
-                    HidStream stream;
-                    try
-                    {
-                        stream = hidDevice.Open();
-                    }
-                    catch
-                    {
-                        throw;
-                    }
+                    var stream = hidDevice.Open();
 
                     // Create and start the forwarding pair.
                     var pair = new ForwardingPair(
@@ -140,7 +229,7 @@ public sealed class InputForwardingService : IInputForwardingService
                 }
 
                 // Activate HidHide now that all devices are hidden.
-                Debug.WriteLine($"[Forwarding] Activating HidHide ({createdPairs.Count} device(s) hidden)");
+                DiagLog($"Activating HidHide ({createdPairs.Count} device(s) hidden)");
                 _hidHide.SetActive(true);
 
                 _pairs.AddRange(createdPairs);
@@ -156,24 +245,6 @@ public sealed class InputForwardingService : IInputForwardingService
                 }
 
                 _hidHide.ClearAllRules();
-
-                // If this was the first init and it failed, clean up the pool too.
-                if (firstInit)
-                {
-                    for (int i = _vigemPool.Count - 1; i >= poolStartSize; i--)
-                    {
-                        try { _vigemPool[i].Disconnect(); _vigemPool[i].Dispose(); } catch { }
-                    }
-                    _vigemPool.RemoveRange(poolStartSize, _vigemPool.Count - poolStartSize);
-
-                    if (_vigemPool.Count == 0)
-                    {
-                        _vigemClient?.Dispose();
-                        _vigemClient = null;
-                    }
-                    _virtualSlotIndices.Clear();
-                }
-
                 throw;
             }
         }
@@ -248,6 +319,23 @@ public sealed class InputForwardingService : IInputForwardingService
         {
             _gate.Release();
         }
+    }
+
+    // ── Virtual slot detection ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the set of XInput slots that currently respond to GetState.
+    /// Ghost ViGEm nodes from previous sessions fail GetState and are excluded.
+    /// </summary>
+    private static HashSet<int> SnapshotOccupiedXInputSlots()
+    {
+        var occupied = new HashSet<int>();
+        for (int i = 0; i < 4; i++)
+        {
+            if (XInput.GetState((uint)i, out _))
+                occupied.Add(i);
+        }
+        return occupied;
     }
 
     private void OnForwardingError(ForwardingErrorEventArgs e)

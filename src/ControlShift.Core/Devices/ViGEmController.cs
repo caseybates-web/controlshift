@@ -24,7 +24,15 @@ public sealed class ViGEmController : IViGEmController
 
     public bool IsConnected => _connected;
 
-    public int UserIndex => _connected ? _controller.UserIndex : -1;
+    public int UserIndex
+    {
+        get
+        {
+            if (!_connected) return -1;
+            try { return _controller.UserIndex; }
+            catch { return -1; } // Xbox360UserIndexNotReportedException — driver hasn't assigned a slot yet
+        }
+    }
 
     public void Connect()
     {
