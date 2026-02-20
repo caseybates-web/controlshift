@@ -1,9 +1,0 @@
-<Project Sdk="WixToolset.Sdk/4.0.4">
-
-  <!--
-    MSI package for the ControlShift application.
-    Build with: dotnet build -d:PublishDir=<path-to-published-app>
-    The PublishDir variable is passed by release.yml after dotnet publish.
-  -->
-
-</Project>
