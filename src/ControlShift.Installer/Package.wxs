@@ -1,0 +1,21 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package Name="!(loc.ProductName)"
+           Manufacturer="!(loc.Manufacturer)"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="1A2B3C4D-5E6F-7A8B-9C0D-E1F2A3B4C5D6"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" />
+
+    <Icon Id="controlshift.ico" SourceFile="$(var.HarvestPath)\Assets\controlshift.ico" />
+    <Property Id="ARPPRODUCTICON" Value="controlshift.ico" />
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+    </Feature>
+
+  </Package>
+
+</Wix>

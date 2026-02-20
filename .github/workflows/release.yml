@@ -9,11 +9,16 @@ permissions:
   contents: write
 
 jobs:
-  build-installer:
+  release:
     runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Extract version from tag
+      id: version
+      shell: bash
+      run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
@@ -23,39 +28,61 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Install WiX 4 CLI
-      run: dotnet tool install --global wix
+    # Download driver installers into the Bundle project's drivers/ directory.
+    - name: Download ViGEmBus
+      shell: bash
+      run: |
+        mkdir -p src/ControlShift.Bundle/drivers
+        curl -L -o src/ControlShift.Bundle/drivers/ViGEmBus_1.22.0_x64_x86_arm64.exe \
+          https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe
 
-    - name: Restore & Publish App (self-contained x64)
+    - name: Download HidHide
+      shell: bash
+      run: |
+        curl -L -o src/ControlShift.Bundle/drivers/HidHide_1.5.230_x64.exe \
+          https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe
+
+    # Build the WinUI 3 app (self-contained x64).
+    - name: Restore App
       run: >
-        dotnet publish src/ControlShift.App/ControlShift.App.csproj
-        -c Release
-        -r win-x64
-        --self-contained
-        -o publish/
+        msbuild src/ControlShift.App/ControlShift.App.csproj
+        /t:Restore
+        /p:Configuration=Release
+        /p:Platform=x64
+        /p:RuntimeIdentifier=win-x64
 
-    - name: Download driver prerequisites
-      run: powershell -ExecutionPolicy Bypass -File src/ControlShift.Installer/download-prereqs.ps1
-      shell: pwsh
-
-    # Build MSI first (needs PublishDir for file harvest).
-    - name: Build MSI Package
+    - name: Build App
       run: >
-        dotnet build src/ControlShift.Package/ControlShift.Package.wixproj
-        -c Release
-        -p:PublishDir=${{ github.workspace }}/publish/
+        msbuild src/ControlShift.App/ControlShift.App.csproj
+        /p:Configuration=Release
+        /p:Platform=x64
+        /p:RuntimeIdentifier=win-x64
+        /p:SelfContained=true
 
-    # Build Burn Bundle (chains ViGEmBus + HidHide + MSI).
-    # ProjectReference to Package project provides $(var.ControlShift.Package.TargetPath).
-    - name: Build Burn Bundle
+    # Build the WiX MSI (harvests files from the app build output).
+    - name: Build MSI
       run: >
-        dotnet build src/ControlShift.Installer/ControlShift.Installer.wixproj
-        -c Release
-      continue-on-error: false
+        msbuild src/ControlShift.Installer/ControlShift.Installer.wixproj
+        /p:Configuration=Release
+        /p:ProductVersion=${{ steps.version.outputs.VERSION }}
+
+    # Build the WiX Burn bundle (chains drivers + MSI).
+    - name: Build Bundle
+      run: >
+        msbuild src/ControlShift.Bundle/ControlShift.Bundle.wixproj
+        /p:Configuration=Release
+        /p:ProductVersion=${{ steps.version.outputs.VERSION }}
+
+    # Locate the bundle exe and rename for release.
+    - name: Prepare release asset
+      shell: bash
+      run: |
+        BUNDLE_EXE=$(find src/ControlShift.Bundle/bin -name "ControlShift.Bundle.exe" -type f | head -1)
+        echo "Found bundle at: $BUNDLE_EXE"
+        cp "$BUNDLE_EXE" "ControlShift-Setup-${{ steps.version.outputs.VERSION }}.exe"
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          src/ControlShift.Installer/bin/Release/*.exe
+        files: ControlShift-Setup-${{ steps.version.outputs.VERSION }}.exe
         generate_release_notes: true

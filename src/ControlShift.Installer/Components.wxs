@@ -1,0 +1,22 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Fragment>
+    <ComponentGroup Id="ShortcutComponents" Directory="ProgramMenuDir">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="ControlShiftShortcut"
+                  Name="ControlShift"
+                  Target="[INSTALLFOLDER]ControlShift.App.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="controlshift.ico" />
+        <RemoveFolder Id="RemoveProgramMenuDir" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\ControlShift"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

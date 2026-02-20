@@ -1,24 +1,27 @@
-<Project Sdk="WixToolset.Sdk/4.0.4">
-
-  <!--
-    DECISION: WiX 4 Burn bootstrapper bundles ViGEmBus + HidHide (Permanent=yes,
-    not removed on uninstall per CLAUDE.md) and the ControlShift MSI.
-    Build with: dotnet tool install - -global wix && dotnet build
-    Requires the MSI to be built first (handled by ProjectReference).
-    Requires the app to be published first:
-      dotnet publish src/ControlShift.App -c Release -r win-x64 - -self-contained -o publish/
-  -->
+<Project Sdk="WixToolset.Sdk/6.0.2">
 
   <PropertyGroup>
-    <OutputType>Bundle</OutputType>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+  </PropertyGroup>
+
+  <!-- Version: defaults to 0.0.1 for local dev; CI passes the real version from the git tag. -->
+  <PropertyGroup>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.1</ProductVersion>
+    <DefineConstants>ProductVersion=$(ProductVersion);HarvestPath=$(HarvestPath)</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Harvest all files from the app's build output into the MSI. -->
+  <PropertyGroup>
+    <HarvestPath Condition="'$(HarvestPath)' == ''">$(MSBuildThisFileDirectory)..\ControlShift.App\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\</HarvestPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="WixToolset.Bal.wixext" Version="4.0.4" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\ControlShift.Package\ControlShift.Package.wixproj" />
+    <HarvestDirectory Include="$(HarvestPath)">
+      <ComponentGroupName>AppFiles</ComponentGroupName>
+      <DirectoryRef>INSTALLFOLDER</DirectoryRef>
+      <SuppressRootDirectory>true</SuppressRootDirectory>
+    </HarvestDirectory>
   </ItemGroup>
 
 </Project>

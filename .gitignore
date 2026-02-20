@@ -422,3 +422,9 @@ FodyWeavers.xsd
 
 # Development HTML mockup/preview files
 ui-*.html
+
+# WiX Toolset build outputs
+*.wixpdb
+
+# Downloaded driver installers (fetched by CI)
+drivers/

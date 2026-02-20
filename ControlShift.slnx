@@ -4,7 +4,8 @@
       <Platform Project="x86" />
     </Project>
     <Project Path="src/ControlShift.Core/ControlShift.Core.csproj" />
-    <Project Path="src/ControlShift.Installer/ControlShift.Installer.csproj" />
+    <Project Path="src/ControlShift.Installer/ControlShift.Installer.wixproj" />
+    <Project Path="src/ControlShift.Bundle/ControlShift.Bundle.wixproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ControlShift.Core.Tests/ControlShift.Core.Tests.csproj" />

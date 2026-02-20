@@ -1,0 +1,58 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Bundle Name="ControlShift"
+          Manufacturer="ControlShift"
+          Version="$(var.ProductVersion)"
+          UpgradeCode="2B3C4D5E-6F7A-8B9C-0D1E-F2A3B4C5D6E7">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication LicenseUrl=""
+                                              Theme="hyperlinkLicense" />
+    </BootstrapperApplication>
+
+    <!-- Detect whether drivers are already installed via their kernel service registry keys. -->
+    <util:RegistrySearch Id="ViGEmBusSearch"
+                         Root="HKLM"
+                         Key="SYSTEM\CurrentControlSet\Services\ViGEmBus"
+                         Value="ImagePath"
+                         Variable="ViGEmBusInstalled"
+                         Result="exists" />
+
+    <util:RegistrySearch Id="HidHideSearch"
+                         Root="HKLM"
+                         Key="SYSTEM\CurrentControlSet\Services\HidHide"
+                         Value="ImagePath"
+                         Variable="HidHideInstalled"
+                         Result="exists" />
+
+    <Chain>
+      <!-- ViGEmBus driver — permanent (never removed on ControlShift uninstall). -->
+      <ExePackage Id="ViGEmBus"
+                  Name="ViGEmBus_1.22.0_x64_x86_arm64.exe"
+                  SourceFile="drivers\ViGEmBus_1.22.0_x64_x86_arm64.exe"
+                  InstallArguments="/quiet /norestart"
+                  UninstallArguments="/quiet /uninstall /norestart"
+                  Permanent="yes"
+                  DetectCondition="ViGEmBusInstalled"
+                  Vital="yes" />
+
+      <!-- HidHide driver — permanent (never removed on ControlShift uninstall). -->
+      <ExePackage Id="HidHide"
+                  Name="HidHide_1.5.230_x64.exe"
+                  SourceFile="drivers\HidHide_1.5.230_x64.exe"
+                  InstallArguments="/quiet /norestart"
+                  UninstallArguments="/quiet /uninstall /norestart"
+                  Permanent="yes"
+                  DetectCondition="HidHideInstalled"
+                  Vital="yes" />
+
+      <!-- ControlShift MSI — the main application. -->
+      <MsiPackage Id="ControlShift"
+                  SourceFile="$(var.ControlShift.Installer.TargetPath)" />
+    </Chain>
+
+  </Bundle>
+
+</Wix>
