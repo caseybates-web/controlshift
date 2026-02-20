@@ -33,7 +33,8 @@
 
                 <!-- Spacing="0" — gap comes from each SlotCard's Margin (4px top + 4px bottom
                      = 8px between card surfaces); 8px sides give the swell room to expand. -->
-                <StackPanel x:Name="SlotPanel" Spacing="0" />
+                <StackPanel x:Name="SlotPanel" Spacing="0"
+                            XYFocusKeyboardNavigation="Disabled" />
 
                 <!-- UNASSIGNED section: hidden until Core surfaces unmatched HID devices -->
                 <TextBlock x:Name="UnassignedHeader"

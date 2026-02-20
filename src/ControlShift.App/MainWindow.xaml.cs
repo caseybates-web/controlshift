@@ -159,14 +159,13 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Fires once when ContentGrid completes its first layout pass (window first shown).
-    /// XYFocusUp/Down and TabIndex must not be set before this point.
+    /// TabIndex must not be set before this point.
     /// </summary>
     private void OnContentGridLoaded(object sender, RoutedEventArgs e)
     {
         ContentGrid.Loaded -= OnContentGridLoaded;
-        NavLog("OnContentGridLoaded — wiring XYFocus + TabIndex + focus events");
+        NavLog("OnContentGridLoaded — wiring TabIndex + focus events");
 
-        UpdateXYFocusLinks();
         for (int i = 0; i < 4; i++)
         {
             _cards[i].TabIndex = i;
@@ -439,6 +438,27 @@ public sealed partial class MainWindow : Window
                         e.Handled = true;
                     }
                     break;
+
+                case VirtualKey.Tab:
+                {
+                    // Manual Tab handling — WinUI's Tab event may or may not fire here,
+                    // but TabIndex provides a reliable fallback if it doesn't.
+                    // When it does fire: move focus explicitly so _focusedCardIndex stays in sync.
+                    if (_focusedCardIndex >= 0)
+                    {
+                        var shiftState = Microsoft.UI.Input.InputKeyboardSource
+                            .GetKeyStateForCurrentThread(VirtualKey.Shift);
+                        bool shiftDown = (shiftState & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+                        int  next      = shiftDown ? _focusedCardIndex - 1 : _focusedCardIndex + 1;
+                        if (next >= 0 && next < _cards.Length)
+                        {
+                            NavLog($"[KeyDown] Tab({(shiftDown ? "↑" : "↓")}) → focus card {next}");
+                            _cards[next].Focus(FocusState.Programmatic);
+                            e.Handled = true;
+                        }
+                    }
+                    break;
+                }
             }
         }
     }
@@ -491,10 +511,6 @@ public sealed partial class MainWindow : Window
         if (_reorderingIndex < 0) return;
         int confirmIdx = _reorderingIndex;
         NavLog($"[ConfirmReorder] confirmIdx={confirmIdx} focusIdx={_focusedCardIndex}");
-
-        // Enqueue XY focus update — deferred so WinUI completes layout after tree mutations
-        // from MoveReorderingCard before we set the links.
-        EnqueueXYFocusUpdate();
 
         _suppressFocusEvents = true;
         try
@@ -562,12 +578,14 @@ public sealed partial class MainWindow : Window
         _suppressFocusEvents = true;
         try
         {
-            ClearXYFocusLinks();
             SlotPanel.Children.Clear();
             Array.Copy(_savedOrder, _cards, _cards.Length);
             foreach (var card in _cards)
                 SlotPanel.Children.Add(card);
-            EnqueueXYFocusUpdate();
+
+            // Rebuild TabIndex to match the restored visual order.
+            for (int i = 0; i < _cards.Length; i++)
+                _cards[i].TabIndex = i;
 
             int restoreIdx = Array.IndexOf(_cards, focusCard);
             if (restoreIdx < 0) restoreIdx = 0;
@@ -627,25 +645,32 @@ public sealed partial class MainWindow : Window
 
         NavLog($"[MoveReorderingCard] {_reorderingIndex} → {newIdx}");
 
-        // Clear XYFocus links before touching the children collection.
-        // WinUI asserts if its focus engine follows an XYFocus link to an element
-        // that is currently being removed from or not yet re-inserted into the tree.
-        ClearXYFocusLinks();
-
         var movingCard = _cards[_reorderingIndex];
-        SlotPanel.Children.RemoveAt(_reorderingIndex);
-        SlotPanel.Children.Insert(newIdx, movingCard);
 
-        (_cards[_reorderingIndex], _cards[newIdx]) = (_cards[newIdx], _cards[_reorderingIndex]);
+        // Suppress focus events for the duration of the tree modification.
+        // Children.RemoveAt can post deferred LostFocus — suppressing prevents
+        // those events from corrupting _focusedCardIndex / _reorderingIndex.
+        _suppressFocusEvents = true;
+        try
+        {
+            SlotPanel.Children.RemoveAt(_reorderingIndex);
+            SlotPanel.Children.Insert(newIdx, movingCard);
 
-        // All cards are back in the tree — rebuild TabIndex and enqueue XYFocus update.
-        // Deferred so WinUI completes its layout pass before we set the links.
-        for (int i = 0; i < _cards.Length; i++)
-            _cards[i].TabIndex = i;
-        EnqueueXYFocusUpdate();
+            (_cards[_reorderingIndex], _cards[newIdx]) = (_cards[newIdx], _cards[_reorderingIndex]);
 
-        _reorderingIndex = newIdx;
-        UpdateCardStates();
+            for (int i = 0; i < _cards.Length; i++)
+                _cards[i].TabIndex = i;
+
+            _reorderingIndex = newIdx;
+            UpdateCardStates();
+            // Re-focus the moved card so keyboard focus stays on it during reorder.
+            _cards[_reorderingIndex].Focus(FocusState.Programmatic);
+        }
+        finally
+        {
+            _suppressFocusEvents = false;
+        }
+
         NavLog($"[MoveReorderingCard] done, reorderIdx now {_reorderingIndex}");
     }
 
@@ -665,65 +690,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// Nulls out all XYFocusUp/Down links on every card.
-    /// Must be called before any SlotPanel.Children modification (RemoveAt, Clear)
-    /// to prevent WinUI's focus engine from following stale links to detached elements.
-    /// </summary>
-    private void ClearXYFocusLinks()
-    {
-        for (int i = 0; i < _cards.Length; i++)
-        {
-            _cards[i].XYFocusUp   = null;
-            _cards[i].XYFocusDown = null;
-        }
-    }
-
-    /// <summary>
-    /// Sets XYFocusUp/Down so WinUI's built-in D-pad focus navigation chains through
-    /// the cards top-to-bottom. Only call after all cards are in the visual tree.
-    /// Logs each card's link targets for post-mortem analysis.
-    /// </summary>
-    private void UpdateXYFocusLinks()
-    {
-        try
-        {
-            for (int i = 0; i < _cards.Length; i++)
-            {
-                _cards[i].XYFocusUp   = i > 0                ? _cards[i - 1] : null;
-                _cards[i].XYFocusDown = i < _cards.Length - 1 ? _cards[i + 1] : null;
-            }
-
-            // Log link targets after every update — makes XYFocus corruption visible in the log.
-            for (int i = 0; i < _cards.Length; i++)
-            {
-                var upCard   = _cards[i].XYFocusUp   as SlotCard;
-                var downCard = _cards[i].XYFocusDown as SlotCard;
-                int upIdx    = upCard   is not null ? Array.IndexOf(_cards, upCard)   : -1;
-                int downIdx  = downCard is not null ? Array.IndexOf(_cards, downCard) : -1;
-                NavLog($"[XYFocus] card[{i}] up={upIdx} down={downIdx}");
-            }
-        }
-        catch (Exception ex)
-        {
-            NavLog($"[UpdateXYFocusLinks ERROR] {ex}");
-        }
-    }
-
-    /// <summary>
-    /// Posts UpdateXYFocusLinks to the dispatcher queue so it runs AFTER WinUI completes
-    /// its layout pass for any pending Children.RemoveAt / Insert / Clear.
-    /// Must be used instead of UpdateXYFocusLinks() whenever a Children modification
-    /// has just occurred (MoveReorderingCard, CancelReorder, ConfirmReorder).
-    /// </summary>
-    private void EnqueueXYFocusUpdate()
-    {
-        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
-        {
-            NavLog("[EnqueueXYFocusUpdate] deferred — running UpdateXYFocusLinks");
-            UpdateXYFocusLinks();
-        });
-    }
+    // DECISION: XYFocus (WinUI's built-in D-pad navigation via XYFocusUp/Down) is
+    // intentionally NOT used. XYFocus links become stale after Children.RemoveAt/Insert
+    // during reorder, and any link update races with WinUI's focus engine layout pass.
+    // The entire class of XYFocus corruption bugs is eliminated by:
+    //   1. XYFocusKeyboardNavigation="Disabled" on SlotPanel (XAML)
+    //   2. All D-pad focus movement via explicit _cards[n].Focus(Programmatic)
+    //      in NavTimer_Tick (gamepad) and ContentGrid_KeyDown (keyboard / Tab)
+    //   3. Tab order driven purely by TabIndex, rebuilt after every reorder
 
     // ── Window sizing ─────────────────────────────────────────────────────────
 
