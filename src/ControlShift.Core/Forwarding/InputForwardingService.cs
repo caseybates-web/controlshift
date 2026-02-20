@@ -80,7 +80,16 @@ public sealed class InputForwardingService : IInputForwardingService
                             $"HID device not found for path: {assignment.SourceDevicePath}");
                     }
 
-                    var stream = hidDevice.Open();
+                    HidStream stream;
+                    try
+                    {
+                        stream = hidDevice.Open();
+                    }
+                    catch
+                    {
+                        vigem.Dispose();
+                        throw;
+                    }
 
                     // 4. Create and start the forwarding pair.
                     var pair = new ForwardingPair(
