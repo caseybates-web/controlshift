@@ -30,9 +30,6 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Install WiX CLI
-      run: dotnet tool install --global wix --version 6.0.2
-
     # Download driver installers into the Bundle project's drivers/ directory.
     - name: Download ViGEmBus
       shell: bash
@@ -64,23 +61,19 @@ jobs:
         /p:RuntimeIdentifier=win-x64
         /p:SelfContained=true
 
-    # 2) Build the WiX MSI (heat harvests app output, then WiX compiles the MSI).
+    # 2) Build the WiX MSI (Files element auto-harvests app output).
     - name: Build MSI
       run: >
-        msbuild src/ControlShift.Installer/ControlShift.Installer.wixproj
-        /p:Configuration=Release
-        /p:Platform=x64
-        /p:ProductVersion=${{ env.VERSION }}
-        /restore
+        dotnet build src/ControlShift.Installer/ControlShift.Installer.wixproj
+        -c Release
+        -p:ProductVersion=${{ env.VERSION }}
 
     # 3) Build the WiX Burn bundle (chains drivers + MSI).
     - name: Build Bundle
       run: >
-        msbuild src/ControlShift.Bundle/ControlShift.Bundle.wixproj
-        /p:Configuration=Release
-        /p:Platform=x64
-        /p:ProductVersion=${{ env.VERSION }}
-        /restore
+        dotnet build src/ControlShift.Bundle/ControlShift.Bundle.wixproj
+        -c Release
+        -p:ProductVersion=${{ env.VERSION }}
 
     # Locate the bundle exe and rename for release.
     - name: Prepare release asset

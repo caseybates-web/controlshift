@@ -18,4 +18,12 @@
 
   </Package>
 
+  <!-- Auto-harvest all files from the app's self-contained build output.
+       Uses the WiX v5+ Files element (replaces HarvestDirectory / heat). -->
+  <Fragment>
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.HarvestPath)**" />
+    </ComponentGroup>
+  </Fragment>
+
 </Wix>
