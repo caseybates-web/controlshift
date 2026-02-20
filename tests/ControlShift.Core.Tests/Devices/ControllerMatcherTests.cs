@@ -112,7 +112,7 @@ public class ControllerMatcherTests
     public void Match_ConnectedSlot_MatchesByIgMarker()
     {
         var matcher = MakeMatcher();
-        var hid = UsbDevice("045E", "028E", slotIndex: 0);
+        var hid = UsbDevice("045E", "02FF", slotIndex: 0);
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
         Assert.Equal(hid, result[0].Hid);
@@ -124,7 +124,7 @@ public class ControllerMatcherTests
     {
         var matcher = MakeMatcher();
         // Only a HID device with IG_01 exists — XInput slot 0 requires IG_00.
-        var hid = UsbDevice("045E", "028E", slotIndex: 1); // IG_01 path, XInput slot 0
+        var hid = UsbDevice("045E", "02FF", slotIndex: 1); // IG_01 path, XInput slot 0
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
         // No fallback — exact match only, so slot 0 gets no HID device.
@@ -136,8 +136,8 @@ public class ControllerMatcherTests
     {
         var matcher = MakeMatcher();
         // Device path contains no IG_0X marker at all — neither exact nor fallback can match.
-        var hid = new HidDeviceInfo("045E", "028E", "Xbox Wireless Controller",
-                                   @"\\?\HID#VID_045E&PID_028E#7&abc&0&0000#{4d1e55b2}");
+        var hid = new HidDeviceInfo("045E", "02FF", "Xbox Wireless Controller",
+                                   @"\\?\HID#VID_045E&PID_02FF#7&abc&0&0000#{4d1e55b2}");
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
         Assert.Null(result[0].Hid);
@@ -157,13 +157,13 @@ public class ControllerMatcherTests
     public void Match_MultipleSlots_EachMatchedByIgMarker()
     {
         var matcher = MakeMatcher();
-        var hid0 = UsbDevice("045E", "028E", slotIndex: 0);
+        var hid0 = UsbDevice("045E", "02FF", slotIndex: 0);
         var hid1 = UsbDevice("054C", "05C4", slotIndex: 1);
         var slots = new[] { ConnectedSlot(0), ConnectedSlot(1), DisconnectedSlot(2), DisconnectedSlot(3) };
 
         var result = matcher.Match(slots, [hid0, hid1]);
 
-        Assert.Equal("045E", result[0].Hid?.Vid);
+        Assert.Equal("02FF", result[0].Hid?.Pid);
         Assert.Equal("054C", result[1].Hid?.Vid);
         Assert.Null(result[2].Hid);
         Assert.Null(result[3].Hid);
@@ -175,7 +175,7 @@ public class ControllerMatcherTests
     public void Match_KnownVendorVid_VendorBrandPopulated()
     {
         var matcher = MakeMatcher(vendors: new KnownVendorEntry("045E", "Xbox"));
-        var hid = UsbDevice("045E", "028E", slotIndex: 0);
+        var hid = UsbDevice("045E", "02FF", slotIndex: 0);
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
         Assert.Equal("Xbox", result[0].VendorBrand);
@@ -210,7 +210,7 @@ public class ControllerMatcherTests
         // HidConnectionType also becomes Unknown (mapped from BusType).
         // The UI falls back to XInputConnectionType (Wired → "USB") for the label.
         var matcher = MakeMatcher();
-        var hid = UsbDevice("045E", "028E", slotIndex: 0);
+        var hid = UsbDevice("045E", "02FF", slotIndex: 0);
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
         Assert.NotNull(result[0].Hid);           // device was matched
@@ -341,7 +341,7 @@ public class ControllerMatcherTests
     [Fact]
     public void Match_NonIntegratedGamepad_IsIntegratedGamepadFalse()
     {
-        var hid = UsbDevice("045E", "028E", slotIndex: 0);
+        var hid = UsbDevice("045E", "02FF", slotIndex: 0);
         var fpDevice = new FingerprintedDevice(hid,
             IsIntegratedGamepad: false,
             KnownDeviceName: null,
@@ -364,10 +364,10 @@ public class ControllerMatcherTests
     public void Match_HidProductName_PreservedOnMatchedController()
     {
         var matcher = MakeMatcher();
-        var hid = UsbDevice("045E", "028E", slotIndex: 0, productName: "Xbox 360 Controller");
+        var hid = UsbDevice("045E", "02FF", slotIndex: 0, productName: "Xbox One Controller");
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
-        Assert.Equal("Xbox 360 Controller", result[0].Hid?.ProductName);
+        Assert.Equal("Xbox One Controller", result[0].Hid?.ProductName);
     }
 
     // ── wired/wireless pool split ─────────────────────────────────────────────
@@ -406,6 +406,36 @@ public class ControllerMatcherTests
         Assert.Equal("0B13", result[1].Hid?.Pid);
         Assert.Equal(BusType.BluetoothLE, result[1].BusType);
         Assert.Equal(HidConnectionType.Bluetooth, result[1].HidConnectionType);
+    }
+
+    // ── ViGEm virtual controller filtering ──────────────────────────────────
+
+    [Fact]
+    public void Match_ViGEmVirtualController_FilteredOut()
+    {
+        // ViGEm virtual Xbox 360 controllers report VID=045E PID=028E.
+        // They must be excluded from HID matching so they don't appear as phantom controllers.
+        var matcher = MakeMatcher();
+        var vigem = UsbDevice("045E", "028E", slotIndex: 0);
+        var result = matcher.Match([ConnectedSlot(0)], [vigem]);
+
+        Assert.Null(result[0].Hid); // filtered out — no HID match
+    }
+
+    [Fact]
+    public void Match_ViGEmFiltered_RealXboxControllerStillMatches()
+    {
+        // Real Xbox One controllers (045E:02FF) must NOT be filtered.
+        var matcher = MakeMatcher();
+        var real = UsbDevice("045E", "02FF", slotIndex: 0);
+        var vigem = UsbDevice("045E", "028E", slotIndex: 1);
+        var result = matcher.Match(
+            [ConnectedSlot(0), ConnectedSlot(1)],
+            [real, vigem]);
+
+        Assert.NotNull(result[0].Hid);
+        Assert.Equal("02FF", result[0].Hid!.Pid);
+        Assert.Null(result[1].Hid); // ViGEm filtered
     }
 
     // ── result count ─────────────────────────────────────────────────────────

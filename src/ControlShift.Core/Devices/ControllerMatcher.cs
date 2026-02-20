@@ -31,19 +31,31 @@ public sealed class ControllerMatcher : IControllerMatcher
         _busDetector   = busDetector;
     }
 
+    /// <summary>
+    /// ViGEm virtual Xbox 360 controllers report VID=045E PID=028E.
+    /// Exclude them from HID matching so they don't appear as phantom controllers in the UI.
+    /// </summary>
+    private static bool IsViGEmVirtualController(HidDeviceInfo hid) =>
+        string.Equals(hid.Vid, "045E", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(hid.Pid, "028E", StringComparison.OrdinalIgnoreCase);
+
     public IReadOnlyList<MatchedController> Match(
         IReadOnlyList<XInputSlotInfo> xinputSlots,
         IReadOnlyList<HidDeviceInfo>  hidDevices)
     {
-        var fingerprinted = _fingerprinter.Fingerprint(hidDevices);
+        // Filter out ViGEm virtual controllers (045E:028E) — they're our own virtual
+        // devices and must not appear in the UI as real controllers.
+        var filteredHidDevices = hidDevices.Where(h => !IsViGEmVirtualController(h)).ToList();
+
+        var fingerprinted = _fingerprinter.Fingerprint(filteredHidDevices);
         var results       = new MatchedController[xinputSlots.Count];
 
         // ── Debug: raw HID device dump ─────────────────────────────────────────
         Debug.WriteLine($"[ControllerMatcher] {xinputSlots.Count} XInput slots, " +
-                        $"{hidDevices.Count} HID devices:");
-        for (int d = 0; d < hidDevices.Count; d++)
+                        $"{hidDevices.Count} HID devices ({hidDevices.Count - filteredHidDevices.Count} ViGEm filtered):");
+        for (int d = 0; d < filteredHidDevices.Count; d++)
         {
-            var h = hidDevices[d];
+            var h = filteredHidDevices[d];
             Debug.WriteLine($"  HID[{d}] VID={h.Vid} PID={h.Pid} name='{h.ProductName}'");
             Debug.WriteLine($"          path={h.DevicePath}");
         }
@@ -58,7 +70,7 @@ public sealed class ControllerMatcher : IControllerMatcher
         var xboxUsbPool     = new List<HidDeviceInfo>();
         var xboxWirelessPool = new List<HidDeviceInfo>();
 
-        foreach (var hid in hidDevices)
+        foreach (var hid in filteredHidDevices)
         {
             if (!string.Equals(hid.Vid, "045E", StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -97,7 +109,7 @@ public sealed class ControllerMatcher : IControllerMatcher
                             $"igMarker={igMarker}");
 
             // Collect unmatched devices whose path contains this slot's IG marker.
-            var igCandidates = hidDevices
+            var igCandidates = filteredHidDevices
                 .Where(h => !usedPaths.Contains(h.DevicePath)
                          && h.DevicePath.IndexOf(igMarker, StringComparison.OrdinalIgnoreCase) >= 0)
                 .ToList();
