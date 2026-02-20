@@ -31,7 +31,8 @@ public sealed partial class MainWindow : Window
 
     // ── Forwarding stack ─────────────────────────────────────────────────────
 
-    private readonly ReorderService _reorderService = new();
+    private readonly ReorderService  _reorderService = new();
+    private readonly SlotOrderStore  _slotOrderStore = new();
 
     // ── Navigation state ──────────────────────────────────────────────────────
 
@@ -198,6 +199,9 @@ public sealed partial class MainWindow : Window
 
         for (int i = 0; i < _cards.Count && i < _viewModel.Slots.Count; i++)
             _cards[i].SetSlot(_viewModel.Slots[i]);
+
+        // After cards have data, reorder to match the user's saved preferred order.
+        ApplySavedOrder();
     }
 
     /// <summary>
@@ -325,7 +329,10 @@ public sealed partial class MainWindow : Window
     private void RevertButton_Click(object sender, RoutedEventArgs e)
     {
         _reorderService.RevertAll();
-        NavLog("[Forwarding] Reverted to identity map");
+        _slotOrderStore.Clear();
+        NavLog("[Forwarding] Reverted to identity map, cleared saved order");
+        // Force refresh to restore default ViewModel sort order
+        _ = RefreshAsync();
     }
 
     /// <summary>
@@ -336,9 +343,90 @@ public sealed partial class MainWindow : Window
     {
         if (!_reorderService.IsActive) return;
 
-        // _cards[visualIndex] has SlotIndex from the ViewModel (the original physical slot).
-        // We need: slotMap[physicalSlot] = virtualSlot (where virtualSlot = visual position).
-        // Start with identity map so any slots not in _cards (e.g. excluded virtual slots) pass through.
+        var slotMap = BuildSlotMap();
+        _reorderService.ApplyOrder(slotMap);
+        NavLog($"[Forwarding] Applied order: [{slotMap[0]},{slotMap[1]},{slotMap[2]},{slotMap[3]}]");
+    }
+
+    // ── Order persistence ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Saves the current visual card order (VID:PID strings) and ViGEm slotMap
+    /// to %APPDATA%\ControlShift\slot-order.json.
+    /// </summary>
+    private void SaveCurrentOrder()
+    {
+        var vidPids = _cards
+            .Select(c => c.VidPid)
+            .Where(v => !string.IsNullOrEmpty(v))
+            .ToArray();
+
+        if (vidPids.Length == 0) return;
+
+        var slotMap = BuildSlotMap();
+        _slotOrderStore.Save(vidPids, slotMap);
+        NavLog($"[SaveOrder] Saved {vidPids.Length} entries: [{string.Join(", ", vidPids)}]");
+    }
+
+    /// <summary>
+    /// Reorders _cards and SlotPanel.Children to match the saved preferred order.
+    /// Controllers in the saved order come first (in saved order).
+    /// New controllers not in saved order append at the bottom.
+    /// Missing controllers (disconnected) are skipped.
+    /// </summary>
+    private void ApplySavedOrder()
+    {
+        var saved = _slotOrderStore.Load();
+        if (saved is null) return;
+
+        // Build lookup: VID:PID → desired visual position
+        var orderMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < saved.Order.Length; i++)
+        {
+            if (!orderMap.ContainsKey(saved.Order[i]))
+                orderMap[saved.Order[i]] = i;
+        }
+
+        // Sort: cards with known VidPid in saved order → unknowns in their current order
+        var sorted = _cards
+            .Select((card, idx) => (card, idx))
+            .OrderBy(t => orderMap.TryGetValue(t.card.VidPid, out int pos)
+                          && !string.IsNullOrEmpty(t.card.VidPid) ? pos : int.MaxValue)
+            .ThenBy(t => t.idx)
+            .Select(t => t.card)
+            .ToList();
+
+        // Only rearrange if order actually changed
+        if (sorted.SequenceEqual(_cards)) return;
+
+        NavLog($"[ApplySavedOrder] Reordering cards to match saved order");
+
+        _suppressFocusEvents = true;
+        try
+        {
+            SlotPanel.Children.Clear();
+            _cards.Clear();
+            _cards.AddRange(sorted);
+            foreach (var card in _cards)
+                SlotPanel.Children.Add(card);
+
+            for (int i = 0; i < _cards.Count; i++)
+                _cards[i].TabIndex = i;
+        }
+        finally
+        {
+            _suppressFocusEvents = false;
+        }
+
+        // Re-derive and apply slotMap from the new visual order
+        ApplyCurrentOrderToForwarding();
+    }
+
+    /// <summary>
+    /// Builds a slotMap[physicalSlot] = virtualSlot from the current card visual order.
+    /// </summary>
+    private int[] BuildSlotMap()
+    {
         var slotMap = new int[] { 0, 1, 2, 3 };
         for (int visualPos = 0; visualPos < _cards.Count; visualPos++)
         {
@@ -346,8 +434,7 @@ public sealed partial class MainWindow : Window
             if (physicalSlot >= 0 && physicalSlot < 4)
                 slotMap[physicalSlot] = visualPos;
         }
-        _reorderService.ApplyOrder(slotMap);
-        NavLog($"[Forwarding] Applied order: [{slotMap[0]},{slotMap[1]},{slotMap[2]},{slotMap[3]}]");
+        return slotMap;
     }
 
     // ── Navigation: XInput polling ────────────────────────────────────────────
@@ -707,6 +794,7 @@ public sealed partial class MainWindow : Window
         NavLog($"[ConfirmReorder] done — reorderIdx={_reorderingIndex}");
 
         ApplyCurrentOrderToForwarding();
+        SaveCurrentOrder();
     }
 
     private void CancelReorder()

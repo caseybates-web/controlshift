@@ -67,6 +67,9 @@ public sealed partial class SlotCard : UserControl
     /// <summary>The physical XInput slot index (0–3) this card represents.</summary>
     public int SlotIndex => _slot?.SlotIndex ?? -1;
 
+    /// <summary>VID:PID in uppercase hex (e.g. "045E:02FD"). Empty when no HID match.</summary>
+    public string VidPid => _slot?.VidPid ?? string.Empty;
+
     /// <summary>Update the card to display the given slot view model.</summary>
     public void SetSlot(SlotViewModel slot)
     {
