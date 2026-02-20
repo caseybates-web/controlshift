@@ -67,6 +67,9 @@ public sealed partial class SlotCard : UserControl
     /// <summary>The physical XInput slot index (0–3) this card represents.</summary>
     public int SlotIndex => _slot?.SlotIndex ?? -1;
 
+    /// <summary>HID device path for forwarding. Null when disconnected or no HID match.</summary>
+    public string? DevicePath => _slot?.DevicePath;
+
     /// <summary>Update the card to display the given slot view model.</summary>
     public void SetSlot(SlotViewModel slot)
     {

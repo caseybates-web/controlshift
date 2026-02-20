@@ -30,7 +30,7 @@ public sealed partial class MainWindow : Window
 
     // ── Forwarding stack ─────────────────────────────────────────────────────
 
-    private readonly ReorderService _reorderService = new();
+    private readonly IInputForwardingService _forwardingService;
 
     // ── Navigation state ──────────────────────────────────────────────────────
 
@@ -83,8 +83,11 @@ public sealed partial class MainWindow : Window
 
     // ── Construction ──────────────────────────────────────────────────────────
 
-    public MainWindow()
+    public MainWindow(IInputForwardingService forwardingService)
     {
+        _forwardingService = forwardingService;
+        _forwardingService.ForwardingError += OnForwardingError;
+
         InitializeComponent();
 
         NavLog($"MainWindow ctor — log: {NavLogPath}");
@@ -179,9 +182,8 @@ public sealed partial class MainWindow : Window
             _cards[i].LostFocus += (_, _) => OnCardLostFocus(idx);
         }
 
-        // Initialize forwarding stack (HidHide + ViGEm + 125Hz loop).
-        // Runs on a background thread to avoid blocking the UI.
-        Task.Run(() => InitializeForwarding());
+        // Forwarding starts on-demand when the user confirms a reorder.
+        // CrashSafetyGuard (installed in Program.cs) handles stale HidHide cleanup.
     }
 
     // ── Refresh ───────────────────────────────────────────────────────────────
@@ -231,62 +233,78 @@ public sealed partial class MainWindow : Window
         _navTimer.Stop();
         _watchdogTimer.Stop();
         _holdTimer.Stop();
-        _reorderService.Dispose();
+        _forwardingService.Dispose();
     }
 
     // ── Forwarding ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Initializes the forwarding stack: HidHide + ViGEm + 125Hz loop with identity map.
-    /// Safe to call from any thread.
+    /// Starts forwarding for the current slot assignments.
+    /// Called after a reorder confirm. Uses the per-device HID forwarding architecture.
     /// </summary>
-    private void InitializeForwarding()
+    private async Task ApplyForwardingAsync()
     {
         try
         {
-            string exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName
-                             ?? throw new InvalidOperationException("Cannot resolve process path");
-            _reorderService.Initialize(exePath);
-            NavLog("[Forwarding] Initialized — identity map active");
+            // Stop any existing forwarding first.
+            await _forwardingService.StopForwardingAsync();
 
-            // Show the Revert All button on the UI thread
-            DispatcherQueue.TryEnqueue(() =>
+            // Build assignments from the current visual order of cards.
+            // Each card knows its original SlotIndex (physical slot) and can provide device info.
+            var assignments = new List<ControlShift.Core.Models.SlotAssignment>();
+            for (int visualPos = 0; visualPos < _cards.Length; visualPos++)
             {
-                if (RevertButton is not null)
-                    RevertButton.Visibility = Visibility.Visible;
-            });
+                var slot = _cards[visualPos];
+                assignments.Add(new ControlShift.Core.Models.SlotAssignment
+                {
+                    TargetSlot       = visualPos,
+                    SourceDevicePath = slot.DevicePath,
+                });
+            }
+
+            await _forwardingService.StartForwardingAsync(assignments);
+            NavLog("[Forwarding] Started — per-device HID forwarding active");
+
+            // Show the Revert button
+            if (RevertButton is not null)
+                RevertButton.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
         {
-            NavLog($"[Forwarding] Init failed: {ex.Message}");
+            NavLog($"[Forwarding] Start failed: {ex.Message}");
             // Non-fatal — app still works without forwarding (e.g. ViGEm not installed)
         }
     }
 
-    private void RevertButton_Click(object sender, RoutedEventArgs e)
+    private async void RevertButton_Click(object sender, RoutedEventArgs e)
     {
-        _reorderService.RevertAll();
-        NavLog("[Forwarding] Reverted to identity map");
+        try
+        {
+            await _forwardingService.StopForwardingAsync();
+            NavLog("[Forwarding] Stopped — reverted to physical order");
+
+            if (RevertButton is not null)
+                RevertButton.Visibility = Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[Forwarding] Revert failed: {ex.Message}");
+        }
     }
 
     /// <summary>
-    /// Builds the slot map from the current visual order of cards and applies it.
-    /// Called after a reorder confirm.
+    /// Handles errors from individual forwarding channels (e.g. device disconnect).
     /// </summary>
-    private void ApplyCurrentOrderToForwarding()
+    private void OnForwardingError(object? sender, ForwardingErrorEventArgs e)
     {
-        if (!_reorderService.IsActive) return;
+        NavLog($"[Forwarding] Error on slot {e.TargetSlot} ({e.DevicePath}): {e.ErrorMessage}");
 
-        // _cards[visualIndex] has SlotIndex from the ViewModel (the original physical slot).
-        // We need: slotMap[physicalSlot] = virtualSlot (where virtualSlot = visual position).
-        var slotMap = new int[4];
-        for (int visualPos = 0; visualPos < 4; visualPos++)
+        DispatcherQueue.TryEnqueue(() =>
         {
-            int physicalSlot = _cards[visualPos].SlotIndex;
-            slotMap[physicalSlot] = visualPos;
-        }
-        _reorderService.ApplyOrder(slotMap);
-        NavLog($"[Forwarding] Applied order: [{slotMap[0]},{slotMap[1]},{slotMap[2]},{slotMap[3]}]");
+            // If forwarding has auto-stopped (all pairs errored), hide the revert button.
+            if (!_forwardingService.IsForwarding && RevertButton is not null)
+                RevertButton.Visibility = Visibility.Collapsed;
+        });
     }
 
     // ── Navigation: XInput polling ────────────────────────────────────────────
@@ -647,7 +665,7 @@ public sealed partial class MainWindow : Window
         NavLog($"[ConfirmReorder] done — focusIdx={_focusedCardIndex} reorderIdx={_reorderingIndex}");
 
         // Apply the new visual order to the forwarding stack
-        ApplyCurrentOrderToForwarding();
+        _ = ApplyForwardingAsync();
     }
 
     private void CancelReorder()

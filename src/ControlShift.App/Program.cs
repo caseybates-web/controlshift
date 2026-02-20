@@ -1,4 +1,4 @@
-using ControlShift.Core.Forwarding;
+using ControlShift.Core.Devices;
 
 namespace ControlShift.App;
 
@@ -22,34 +22,31 @@ namespace ControlShift.App;
 /// </remarks>
 class Program
 {
+    /// <summary>
+    /// Shared HidHide service — created once, used by CrashSafetyGuard and InputForwardingService.
+    /// </summary>
+    internal static IHidHideService HidHideService { get; private set; } = default!;
+
     [STAThread]
     static void Main(string[] args)
     {
-        // CRITICAL: HidHide crash safety — always clear stale state on startup.
-        // If the previous run crashed while HidHide was active, physical controllers
-        // would be invisible to all apps until we clear the rules.
+        // Create the HidHide service once. Falls back to NullHidHideService if driver is missing.
         try
         {
-            using var hidHide = new HidHideService();
-            if (hidHide.IsAvailable)
-                hidHide.ClearAll();
+            var svc = new HidHideService();
+            if (svc.IsDriverInstalled)
+                HidHideService = svc;
+            else
+                HidHideService = new NullHidHideService();
         }
         catch
         {
-            // Best-effort — HidHide may not be installed
+            HidHideService = new NullHidHideService();
         }
 
-        // Register crash handler to clear HidHide on unhandled exceptions.
-        AppDomain.CurrentDomain.UnhandledException += (_, _) =>
-        {
-            try
-            {
-                using var hidHide = new HidHideService();
-                if (hidHide.IsAvailable)
-                    hidHide.ClearAll();
-            }
-            catch { /* must not throw during crash */ }
-        };
+        // CRITICAL: CrashSafetyGuard clears stale HidHide state on startup AND
+        // registers crash/exit handlers for defense-in-depth.
+        CrashSafetyGuard.Install(HidHideService);
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
