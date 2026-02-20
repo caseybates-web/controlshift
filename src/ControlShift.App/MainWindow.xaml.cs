@@ -41,9 +41,12 @@ public sealed partial class MainWindow : Window
 
     // ── Core ──────────────────────────────────────────────────────────────────
 
-    private readonly MainViewModel   _viewModel;
-    private readonly DispatcherTimer _pollTimer;
-    private readonly List<SlotCard>  _cards = new();
+    private readonly MainViewModel     _viewModel;
+    private readonly DispatcherTimer   _pollTimer;
+    private readonly List<SlotCard>    _cards = new();
+    private readonly XInputEnumerator  _xinputEnum;
+    private readonly HidEnumerator     _hidEnum;
+    private static MainWindow?         _instance;  // for static WndProc callback
 
     // ── Forwarding stack ─────────────────────────────────────────────────────
 
@@ -160,7 +163,10 @@ public sealed partial class MainWindow : Window
 
         var busDetector = new PnpBusDetector();
         var matcher     = new ControllerMatcher(vendorDb, fingerprinter, busDetector);
-        _viewModel      = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher);
+        _xinputEnum     = new XInputEnumerator();
+        _hidEnum        = new HidEnumerator();
+        _viewModel      = new MainViewModel(_xinputEnum, _hidEnum, matcher);
+        _instance       = this;
 
         SetWindowSize(WindowWidth, WindowHeight);
 
@@ -172,9 +178,15 @@ public sealed partial class MainWindow : Window
         // (before the first layout pass) triggers STATUS_ASSERTION_FAILURE in WinUI 3.
         ContentGrid.Loaded += OnContentGridLoaded;
 
-        // Poll for device changes every 5 seconds.
+        // Poll for XInput state changes every 5 seconds (battery, connection).
+        // Only invalidates XInput cache — HID and bus detection are cached until
+        // WM_DEVICECHANGE fires (avoids CfgMgr32 tree walks that trigger chimes).
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DevicePollSeconds) };
-        _pollTimer.Tick += async (_, _) => await RefreshAsync();
+        _pollTimer.Tick += async (_, _) =>
+        {
+            _xinputEnum.InvalidateCache();
+            await RefreshAsync();
+        };
         _pollTimer.Start();
 
         // Poll XInput at ~60 fps for A/B buttons and D-pad navigation.
@@ -202,6 +214,10 @@ public sealed partial class MainWindow : Window
 
         // XInput diagnostic dump — written once on startup before any abstraction.
         WriteXInputDiagnostic();
+
+        // Hook WM_DEVICECHANGE to trigger full refresh when devices are added/removed.
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        HookWmDeviceChange(hwnd);
 
         // Initial scan on window open.
         _ = RefreshAsync();
@@ -1036,7 +1052,8 @@ public sealed partial class MainWindow : Window
 
             for (uint i = 0; i < 4; i++)
             {
-                if (XInput.GetState(i, out State state))
+                bool stateOk = XInput.GetState(i, out State state);
+                if (stateOk)
                 {
                     current |= state.Gamepad.Buttons;
                     if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
@@ -1792,5 +1809,72 @@ public sealed partial class MainWindow : Window
             System.IO.File.WriteAllText(dumpPath, sb.ToString());
         }
         catch { /* diagnostic writes must never throw */ }
+    }
+
+    // ── WM_DEVICECHANGE hook ────────────────────────────────────────────────
+    // Listens for device arrival/removal events and triggers a full cache-
+    // invalidated refresh (debounced to coalesce rapid-fire events).
+
+    private const int WM_DEVICECHANGE          = 0x0219;
+    private const int DBT_DEVNODES_CHANGED     = 0x0007;
+    private const int GWLP_WNDPROC             = -4;
+    private const double DeviceChangeDebounceMs = 500;
+
+    private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+    private static WndProcDelegate? _wndProc; // prevent GC
+    private static IntPtr _oldWndProc;
+    private DispatcherTimer? _deviceChangeDebounce;
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
+    private static extern IntPtr CallWindowProcW(IntPtr lpPrevWndFunc, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private void HookWmDeviceChange(IntPtr hwnd)
+    {
+        _wndProc = new WndProcDelegate(DeviceChangeWndProc);
+        _oldWndProc = SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+            Marshal.GetFunctionPointerForDelegate(_wndProc));
+        NavLog("[WM_DEVICECHANGE] WndProc subclassed");
+    }
+
+    private static IntPtr DeviceChangeWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        if (msg == WM_DEVICECHANGE && (int)wParam == DBT_DEVNODES_CHANGED)
+        {
+            _instance?.OnDeviceChangeNotification();
+        }
+
+        return CallWindowProcW(_oldWndProc, hwnd, msg, wParam, lParam);
+    }
+
+    /// <summary>
+    /// Called on every DBT_DEVNODES_CHANGED. Debounces: waits 500ms for events
+    /// to settle, then invalidates all caches and triggers a full refresh.
+    /// </summary>
+    private void OnDeviceChangeNotification()
+    {
+        if (_deviceChangeDebounce == null)
+        {
+            _deviceChangeDebounce = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(DeviceChangeDebounceMs)
+            };
+            _deviceChangeDebounce.Tick += async (_, _) =>
+            {
+                _deviceChangeDebounce!.Stop();
+                NavLog("[WM_DEVICECHANGE] Debounced full refresh — invalidating all caches");
+                _xinputEnum.InvalidateAll();
+                _hidEnum.InvalidateCache();
+                // PnpBusDetector cache is permanent (additive) — new device paths
+                // automatically get a fresh CfgMgr32 tree walk on cache miss.
+                await RefreshAsync();
+            };
+        }
+
+        // Restart the debounce timer on each event to coalesce rapid-fire notifications.
+        _deviceChangeDebounce.Stop();
+        _deviceChangeDebounce.Start();
     }
 }

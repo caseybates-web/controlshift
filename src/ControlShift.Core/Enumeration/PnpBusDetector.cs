@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -83,19 +84,24 @@ public sealed class PnpBusDetector : IPnpBusDetector
         uint BufferLen,
         uint ulFlags);
 
+    // ── Bus type cache ────────────────────────────────────────────────────────
+    // CfgMgr32 tree walks (CM_Locate_DevNodeW → CM_Get_Parent) trigger
+    // DBT_DEVNODES_CHANGED events. We cache results permanently — a device's
+    // bus type never changes for a given path. New device paths get a fresh
+    // tree walk on first access (cache miss).
+    private readonly ConcurrentDictionary<string, BusType> _busTypeCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
     public BusType DetectBusType(string hidDevicePath)
     {
-        try
+        return _busTypeCache.GetOrAdd(hidDevicePath, path =>
         {
-            return DetectBusTypeCore(hidDevicePath);
-        }
-        catch
-        {
-            return BusType.Unknown;
-        }
+            try { return DetectBusTypeCore(path); }
+            catch { return BusType.Unknown; }
+        });
     }
 
     private BusType DetectBusTypeCore(string hidDevicePath)

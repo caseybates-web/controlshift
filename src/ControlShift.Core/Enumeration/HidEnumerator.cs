@@ -24,8 +24,21 @@ namespace ControlShift.Core.Enumeration;
 /// </remarks>
 public sealed class HidEnumerator : IHidEnumerator
 {
+    // Cache HID results between refresh cycles. Invalidated only by
+    // WM_DEVICECHANGE — HID device set doesn't change without a PnP event.
+    private IReadOnlyList<HidDeviceInfo>? _cachedResults;
+
+    /// <summary>
+    /// Clears the cached HID device list so the next <see cref="GetDevices"/>
+    /// call re-enumerates via HidSharp and BLE SetupAPI.
+    /// </summary>
+    public void InvalidateCache() => _cachedResults = null;
+
     public IReadOnlyList<HidDeviceInfo> GetDevices()
     {
+        if (_cachedResults is not null)
+            return _cachedResults;
+
         var results = new List<HidDeviceInfo>();
 
         // ── HidSharp enumeration ──────────────────────────────────────────────
@@ -76,6 +89,7 @@ public sealed class HidEnumerator : IHidEnumerator
         }
         Debug.WriteLine($"[HidEnum] {bleAdded} BLE device(s) added (not already in HidSharp results)");
 
+        _cachedResults = results;
         return results;
     }
 

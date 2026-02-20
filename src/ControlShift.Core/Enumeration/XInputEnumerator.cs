@@ -89,13 +89,39 @@ public sealed class XInputEnumerator : IXInputEnumerator
 
     private readonly bool?[] _confirmedReal = new bool?[4];
 
+    // Cache XInput slot results between refresh cycles. Invalidated by the
+    // 5-second timer (for battery/connection updates) and by WM_DEVICECHANGE.
+    private IReadOnlyList<XInputSlotInfo>? _cachedSlots;
+
+    /// <summary>
+    /// Clears the cached slot data so the next <see cref="GetSlots"/> call
+    /// re-polls XInput. Ghost slot cache (<c>_confirmedReal</c>) is preserved —
+    /// call <see cref="InvalidateAll"/> to also reset ghost detection.
+    /// </summary>
+    public void InvalidateCache() => _cachedSlots = null;
+
+    /// <summary>
+    /// Clears both the slot cache and the ghost detection cache.
+    /// Call on WM_DEVICECHANGE when the PnP device tree has changed.
+    /// </summary>
+    public void InvalidateAll()
+    {
+        _cachedSlots = null;
+        for (int i = 0; i < 4; i++)
+            _confirmedReal[i] = null;
+    }
+
     // ── IXInputEnumerator ─────────────────────────────────────────────────────
 
     public IReadOnlyList<XInputSlotInfo> GetSlots()
     {
+        if (_cachedSlots is not null)
+            return _cachedSlots;
+
         var results = new XInputSlotInfo[4];
         for (int i = 0; i < 4; i++)
             results[i] = QuerySlot(i);
+        _cachedSlots = results;
         return results;
     }
 
