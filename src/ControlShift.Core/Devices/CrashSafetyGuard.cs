@@ -15,7 +15,7 @@ public static class CrashSafetyGuard
 {
     /// <summary>
     /// Immediately clears stale HidHide rules and registers crash/exit handlers.
-    /// Safe to call multiple times — idempotent.
+    /// Safe to call multiple times; idempotent.
     /// </summary>
     public static void Install(IHidHideService hidHide)
     {
