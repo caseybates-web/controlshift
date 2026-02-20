@@ -50,7 +50,7 @@ public sealed class WmiProcessWatcherTests : IDisposable
     [Fact]
     public void EscapeWql_EscapesSingleQuotes()
     {
-        WmiProcessWatcher.EscapeWql("game's.exe").Should().Be("game\\'s.exe");
+        WmiProcessWatcher.EscapeWql("game's.exe").Should().Be("game''s.exe");
     }
 
     [Fact]

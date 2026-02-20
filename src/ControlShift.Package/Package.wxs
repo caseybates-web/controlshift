@@ -3,7 +3,7 @@
 <!--
   MSI package for the ControlShift application.
   Installs to ProgramFiles\ControlShift\.
-  Custom action on uninstall runs ControlShift.App.exe - -cleanup to clear HidHide rules.
+  Custom action on uninstall runs ControlShift.App.exe --cleanup to clear HidHide rules.
 -->
 
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
@@ -29,7 +29,7 @@
       <ComponentRef Id="CleanupAction" />
     </Feature>
 
-    <!-- Custom action: run ControlShift.App.exe --cleanup on uninstall -->
+    <!-- Registry key to serve as KeyPath for the cleanup component -->
     <Component Id="CleanupAction" Directory="INSTALLFOLDER">
       <RegistryValue Root="HKLM"
                      Key="SOFTWARE\ControlShift"
@@ -39,11 +39,16 @@
                      KeyPath="yes" />
     </Component>
 
+    <!--
+      Custom action: run ControlShift.App.exe --cleanup on uninstall to clear HidHide rules.
+      Uses Execute="immediate" so INSTALLFOLDER resolves correctly.
+      Scheduled Before="RemoveFiles" so the exe still exists on disk.
+      Return="ignore" so uninstall proceeds even if cleanup fails.
+    -->
     <CustomAction Id="RunCleanup"
                   Directory="INSTALLFOLDER"
                   ExeCommand="ControlShift.App.exe --cleanup"
-                  Execute="deferred"
-                  Impersonate="no"
+                  Execute="immediate"
                   Return="ignore" />
 
     <InstallExecuteSequence>

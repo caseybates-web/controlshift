@@ -1,7 +1,7 @@
 {
   "games": [
     { "exe": "eldenring.exe", "anticheat": "EAC", "name": "Elden Ring" },
-    { "exe": "start_protected_game.exe", "anticheat": "EAC", "name": "Elden Ring (launcher)" },
+    { "exe": "start_protected_game.exe", "anticheat": "EAC", "name": "EAC Protected Game Launcher (generic)" },
     { "exe": "FortniteClient-Win64-Shipping.exe", "anticheat": "EAC", "name": "Fortnite" },
     { "exe": "r5apex.exe", "anticheat": "EAC", "name": "Apex Legends" },
     { "exe": "FallGuys_client_game.exe", "anticheat": "EAC", "name": "Fall Guys" },

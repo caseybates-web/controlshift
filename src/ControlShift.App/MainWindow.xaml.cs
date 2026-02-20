@@ -99,12 +99,17 @@ public sealed partial class MainWindow : Window
             System.IO.Path.GetTempPath(),
             $"ControlShift-nav-{DateTime.Now:yyyyMMdd-HHmmss}.log");
 
+    private static readonly object _logLock = new();
+
     private static void NavLog(string msg)
     {
         var line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
         Debug.WriteLine(line);
-        try { System.IO.File.AppendAllText(NavLogPath, line + System.Environment.NewLine); }
-        catch { /* log writes must never throw */ }
+        lock (_logLock)
+        {
+            try { System.IO.File.AppendAllText(NavLogPath, line + System.Environment.NewLine); }
+            catch { /* log writes must never throw */ }
+        }
     }
 
     // ── Construction ──────────────────────────────────────────────────────────
@@ -118,7 +123,11 @@ public sealed partial class MainWindow : Window
         // Initialize anticheat database (best-effort — falls back to empty).
         string antiCheatPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "anticheat-games.json");
         try   { _antiCheatDb = AntiCheatDatabase.FromFile(antiCheatPath); }
-        catch { _antiCheatDb = new AntiCheatDatabase(Array.Empty<AntiCheatEntry>()); }
+        catch (Exception ex)
+        {
+            NavLog($"WARNING: Failed to load anticheat database — anticheat games will NOT be auto-detected: {ex.Message}");
+            _antiCheatDb = new AntiCheatDatabase(Array.Empty<AntiCheatEntry>());
+        }
 
         // Initialize WMI process watcher for auto-apply/auto-revert.
         _processWatcher = new WmiProcessWatcher();

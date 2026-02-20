@@ -53,12 +53,10 @@ public sealed class AntiCheatDatabaseTests
     public void FromFile_LoadsBundledDatabase()
     {
         // This test loads the actual anticheat-games.json bundled with the project.
+        // The file is copied to output via Content item in the test csproj.
         string path = Path.Combine(AppContext.BaseDirectory, "anticheat-games.json");
-        if (!File.Exists(path))
-        {
-            // Skip gracefully in environments where the file isn't copied.
-            return;
-        }
+        File.Exists(path).Should().BeTrue(
+            "anticheat-games.json should be copied to test output (check Content item in test csproj)");
 
         var db = AntiCheatDatabase.FromFile(path);
         db.IsAntiCheatGame("eldenring.exe").Should().BeTrue();

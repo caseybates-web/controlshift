@@ -42,10 +42,10 @@
         DetectCondition="false"
         Vital="yes" />
 
-      <!-- ControlShift MSI -->
+      <!-- ControlShift MSI (built by the ControlShift.Package project via ProjectReference) -->
       <MsiPackage
         Id="ControlShiftMsi"
-        SourceFile="$(var.ControlShift.Installer.TargetDir)\ControlShift.msi"
+        SourceFile="$(var.ControlShift.Package.TargetPath)"
         Vital="yes" />
     </Chain>
 

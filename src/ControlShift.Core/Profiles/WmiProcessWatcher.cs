@@ -57,9 +57,17 @@ public sealed class WmiProcessWatcher : IProcessWatcher
 
     public void StopWatching()
     {
+        // Unsubscribe event handlers before stopping to prevent callbacks during cleanup.
+        UnsubscribeEvents();
         CleanupWatcher(ref _startWatcher);
         CleanupWatcher(ref _stopWatcher);
         _watchedExeNames.Clear();
+    }
+
+    private void UnsubscribeEvents()
+    {
+        try { if (_startWatcher is not null) _startWatcher.EventArrived -= OnProcessStarted; } catch { /* best effort */ }
+        try { if (_stopWatcher is not null)  _stopWatcher.EventArrived -= OnProcessStopped; } catch { /* best effort */ }
     }
 
     private static void CleanupWatcher(ref ManagementEventWatcher? watcher)
@@ -94,9 +102,10 @@ public sealed class WmiProcessWatcher : IProcessWatcher
 
     /// <summary>
     /// Escapes single quotes in WQL strings to prevent injection.
+    /// WQL uses doubled single-quotes ('') as the escape sequence.
     /// </summary>
     internal static string EscapeWql(string value) =>
-        value.Replace("'", "\\'");
+        value.Replace("'", "''");
 
     public void Dispose()
     {

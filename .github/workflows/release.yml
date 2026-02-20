@@ -38,11 +38,19 @@ jobs:
       run: powershell -ExecutionPolicy Bypass -File src/ControlShift.Installer/download-prereqs.ps1
       shell: pwsh
 
-    - name: Build WiX Installer
+    # Build MSI first (needs PublishDir for file harvest).
+    - name: Build MSI Package
+      run: >
+        dotnet build src/ControlShift.Package/ControlShift.Package.wixproj
+        -c Release
+        -p:PublishDir=${{ github.workspace }}/publish/
+
+    # Build Burn Bundle (chains ViGEmBus + HidHide + MSI).
+    # ProjectReference to Package project provides $(var.ControlShift.Package.TargetPath).
+    - name: Build Burn Bundle
       run: >
         dotnet build src/ControlShift.Installer/ControlShift.Installer.wixproj
         -c Release
-        -d:PublishDir=${{ github.workspace }}/publish/
       continue-on-error: false
 
     - name: Create GitHub Release
