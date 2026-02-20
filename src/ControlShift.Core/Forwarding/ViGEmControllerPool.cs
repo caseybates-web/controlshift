@@ -13,6 +13,9 @@ namespace ControlShift.Core.Forwarding;
 /// </summary>
 public sealed class ViGEmControllerPool : IDisposable
 {
+    /// <summary>Delay after connecting virtual controllers for Windows to propagate slot assignments.</summary>
+    private const int SlotPropagationDelayMs = 300;
+
     private readonly ViGEmClient _client;
     private readonly IXbox360Controller[] _controllers = new IXbox360Controller[4];
     private readonly HashSet<int> _virtualSlotIndices = new();
@@ -51,8 +54,7 @@ public sealed class ViGEmControllerPool : IDisposable
 
         _connected = true;
 
-        // Let Windows propagate slot assignments
-        Thread.Sleep(300);
+        Thread.Sleep(SlotPropagationDelayMs);
 
         // Diff: new slots that appeared after connecting are virtual
         _virtualSlotIndices.Clear();

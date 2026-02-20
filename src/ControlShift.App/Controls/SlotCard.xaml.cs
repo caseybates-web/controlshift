@@ -32,7 +32,10 @@ public enum CardState
 /// </summary>
 public sealed partial class SlotCard : UserControl
 {
-    // ── Card state colors ─────────────────────────────────────────────────────
+    // ── Constants ───────────────────────────────────────────────────────────
+
+    private const ushort TapRumbleIntensity = 16383; // 25% of ushort.MaxValue — noticeable but not startling
+    private const int    TapRumbleDurationMs = 200;
 
     private static readonly Color ColorBadgeEmpty     = Color.FromArgb(255,  85,  85,  85); // #555555
     private static readonly Color ColorBadgeConnected = Color.FromArgb(255,  16, 124,  16); // #107C10
@@ -262,13 +265,11 @@ public sealed partial class SlotCard : UserControl
         _isRumbling = true;
         try
         {
-            // 16383 ≈ 25% of ushort.MaxValue (65535) — enough to feel without startling.
-            XInput.SetVibration((uint)_slot.SlotIndex, 16383, 16383);
+            XInput.SetVibration((uint)_slot.SlotIndex, TapRumbleIntensity, TapRumbleIntensity);
 
-            // Play the jiggle animation concurrently with the 200ms rumble.
             JiggleStoryboard.Begin();
 
-            await Task.Delay(200);
+            await Task.Delay(TapRumbleDurationMs);
 
             XInput.SetVibration((uint)_slot.SlotIndex, 0, 0);
             ApplyCardState();

@@ -16,13 +16,27 @@ using ControlShift.Core.Forwarding;
 namespace ControlShift.App;
 
 /// <summary>
-/// Standalone Xbox-aesthetic window (~480×600 logical px).
+/// Standalone Xbox-aesthetic window (400×700 logical px).
 /// Shows 4 controller slot cards. Click a card to rumble it.
 /// D-pad / Tab navigates cards; A / Enter selects for reordering; B / Escape cancels.
 /// Polls for device changes every 5 seconds.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
+    // ── Constants ─────────────────────────────────────────────────────────────
+
+    private const int    WindowWidth             = 400;
+    private const int    WindowHeight            = 700;
+    private const double UiPollIntervalMs        = 16.0;   // ~60 fps for gamepad input
+    private const double DevicePollSeconds       = 5.0;    // device enumeration refresh
+    private const double WatchdogIntervalSeconds = 5.0;    // nav timer health check
+    private const short  StickDeadzoneThreshold  = 8192;   // ~25% of ±32768 range
+    private const double HoldProgressDelayMs     = 200.0;  // show progress bar after this
+    private const double HoldProgressRangeMs     = 300.0;  // bar fills over [200ms, 500ms]
+    private const double HoldReorderThresholdMs  = 500.0;  // enter reorder mode at this
+    private const ushort RumbleHoldMin           = 6553;   // ~10% intensity at hold start
+    private const ushort RumbleHoldRange         = 19661;  // ramps to ~40% at threshold
+
     // ── Core ──────────────────────────────────────────────────────────────────
 
     private readonly MainViewModel   _viewModel;
@@ -108,7 +122,7 @@ public sealed partial class MainWindow : Window
         var matcher     = new ControllerMatcher(vendorDb, fingerprinter, busDetector);
         _viewModel      = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher);
 
-        SetWindowSize(400, 700);
+        SetWindowSize(WindowWidth, WindowHeight);
 
         // Cards are created dynamically in UpdateCards() based on how many
         // non-excluded slots the ViewModel returns (could be 1–4).
@@ -119,25 +133,24 @@ public sealed partial class MainWindow : Window
         ContentGrid.Loaded += OnContentGridLoaded;
 
         // Poll for device changes every 5 seconds.
-        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DevicePollSeconds) };
         _pollTimer.Tick += async (_, _) => await RefreshAsync();
         _pollTimer.Start();
 
-        // Poll XInput at 16ms (~60 fps) for A/B buttons and D-pad navigation.
+        // Poll XInput at ~60 fps for A/B buttons and D-pad navigation.
         // DispatcherTimer fires on the UI thread, so no DispatcherQueue.TryEnqueue needed.
-        _navTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _navTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(UiPollIntervalMs) };
         _navTimer.Tick += NavTimer_Tick;
         _navTimer.Start();
 
         // ONE hold timer — created here, reused for every A press, never recreated.
-        // Fires at 16ms while A is held; drives the hold-progress bar animation.
-        _holdTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _holdTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(UiPollIntervalMs) };
         _holdTimer.Tick += HoldTimer_Tick;
 
         // Watchdog: every 5s verify the nav timer is still running and restart if not.
         // Guards against any scenario where the timer silently stops (driver errors,
         // unhandled exceptions escaping the catch, or unexpected Stop() calls).
-        _watchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _watchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(WatchdogIntervalSeconds) };
         _watchdogTimer.Tick += WatchdogTimer_Tick;
         _watchdogTimer.Start();
 
@@ -261,14 +274,6 @@ public sealed partial class MainWindow : Window
         elements.Add(ExitButton);
 
         return elements;
-    }
-
-    /// <summary>Finds the index of <paramref name="element"/> in the focusable list, or -1.</summary>
-    private int GetFocusIndex(UIElement? element)
-    {
-        if (element is null) return -1;
-        var elements = GetFocusableElementsInOrder();
-        return elements.IndexOf(element);
     }
 
     /// <summary>Returns the currently focused card, or null if a button is focused.</summary>
@@ -471,9 +476,8 @@ public sealed partial class MainWindow : Window
             GamepadButtons newReleases = _prevGamepadButtons & ~current;
             _prevGamepadButtons = current;
 
-            const short Threshold = 8192;
-            bool stickUp   = maxThumbY >  Threshold && _prevLeftThumbY <=  Threshold;
-            bool stickDown = maxThumbY < -Threshold && _prevLeftThumbY >= -Threshold;
+            bool stickUp   = maxThumbY >  StickDeadzoneThreshold && _prevLeftThumbY <=  StickDeadzoneThreshold;
+            bool stickDown = maxThumbY < -StickDeadzoneThreshold && _prevLeftThumbY >= -StickDeadzoneThreshold;
             _prevLeftThumbY = maxThumbY;
 
             bool navUp        = (newPresses  & GamepadButtons.DPadUp)   != 0 || stickUp;
@@ -604,13 +608,13 @@ public sealed partial class MainWindow : Window
 
             double elapsedMs = (DateTime.UtcNow - _aHoldStart.Value).TotalMilliseconds;
 
-            var rumbleIntensity = (ushort)(6553 + 19661 * Math.Clamp(elapsedMs / 500.0, 0.0, 1.0));
+            var rumbleIntensity = (ushort)(RumbleHoldMin + RumbleHoldRange * Math.Clamp(elapsedMs / HoldReorderThresholdMs, 0.0, 1.0));
             card.SetHoldRumble(rumbleIntensity);
 
-            if (elapsedMs >= 200.0)
-                card.ShowHoldProgress((elapsedMs - 200.0) / 300.0);
+            if (elapsedMs >= HoldProgressDelayMs)
+                card.ShowHoldProgress((elapsedMs - HoldProgressDelayMs) / HoldProgressRangeMs);
 
-            if (elapsedMs >= 500.0 && !_aHoldEnteredReorder)
+            if (elapsedMs >= HoldReorderThresholdMs && !_aHoldEnteredReorder)
             {
                 _aHoldEnteredReorder = true;
                 _holdTimer.Stop();
