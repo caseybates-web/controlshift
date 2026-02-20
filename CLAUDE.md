@@ -252,6 +252,64 @@ If devices stay hidden after a crash, the user loses all controller input until 
 
 ---
 
+## Phase 2 ViGEm Hardware Validation Spike
+
+**Spike location:** `src/ControlShift.Spike/Program.cs`
+**Purpose:** Validate ViGEm + HidHide APIs work correctly on this machine before building the full forwarding stack.
+
+**To run:** Build and execute as Administrator:
+```
+dotnet build src/ControlShift.Spike
+.\src\ControlShift.Spike\bin\Debug\net8.0-windows10.0.19041.0\ControlShift.Spike.exe
+```
+
+### Confirmed API shapes (from ilspy decompilation of NuGet packages)
+
+**ViGEm (`Nefarius.ViGEm.Client` 1.21.256):**
+- No `Xbox360Report` class — mutation is done via methods on `IXbox360Controller`:
+  - `SetButtonsFull(ushort buttons)` — pass raw XUSB bitmask (matches `GamepadButtons` directly)
+  - `SetAxisValue(Xbox360Axis axis, short value)` — `Xbox360Axis.LeftThumbX / LeftThumbY / RightThumbX / RightThumbY`
+  - `SetSliderValue(Xbox360Slider slider, byte value)` — `Xbox360Slider.LeftTrigger / RightTrigger`
+  - `SubmitReport()` — send accumulated state to the driver
+- `AutoSubmitReport` defaults to `true` (each Set* call auto-submits) — set to `false` for batched 125Hz forwarding
+- `UserIndex` (int) — which XInput slot (0–3) Windows assigned to this virtual controller
+- `ViGEmClient.CreateXbox360Controller()` — factory; `Connect()` assigns a slot; `Disconnect()` releases it
+
+**HidHide (`Nefarius.Drivers.HidHide` 3.3.0):**
+- `IsInstalled` / `IsOperational` — check before using; throws `HidHideDriverAccessFailedException` if driver absent
+- `IsActive` — enable/disable device hiding globally
+- `AddBlockedInstanceId(string instanceId)` — takes device instance ID (NOT the HID symbolic link path)
+- `ClearBlockedInstancesList()` — removes all blocks
+- `AddApplicationPath(string path, bool throwIfInvalid)` — add process to allowlist
+- `ClearApplicationsList()` — removes all allowed apps
+
+**HID path → instance ID conversion:**
+```
+\\?\hid#vid_045e&pid_02ff&ig_00#7&286a539d&1&0000#{4d1e55b2-...}
+→ HID\VID_045E&PID_02FF&IG_00\7&286A539D&1&0000
+Strip \\?\, strip #{guid} suffix, replace # with \, uppercase.
+```
+
+### Findings — TO BE FILLED IN AFTER RUNNING
+
+Run the spike and record results here:
+- [ ] ViGEm driver present on machine: ___
+- [ ] Virtual controllers created successfully: ___
+- [ ] Slot assignment: virtual[0] → XInput slot ___, virtual[1] → XInput slot ___
+- [ ] HidHide driver present: ___
+- [ ] HidHide allowlist: our process still reads physical controllers after hiding: ___
+- [ ] Forwarding loop actual Hz achieved: ___
+- [ ] Any errors or unexpected behavior: ___
+
+### Implications for Step 9 implementation
+
+- **`InputForwardingService`**: set `AutoSubmitReport = false`; call `SubmitReport()` once per loop tick
+- **Slot assignment**: ViGEm assigns slots in order from lowest available. Hide all physical first, then connect virtual to get deterministic slot 0, 1, 2, 3.
+- **HidHide safety**: `ClearBlockedInstancesList()` + `IsActive = false` must run in all exit paths (normal, crash, exception)
+- **Instance ID source**: derive from `HidDeviceInfo.DevicePath` using the conversion above (already in HidEnumerator output)
+
+---
+
 ## Phase 3 — Per-Game Profiles
 
 - WMI process watcher: `SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName = ?`

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ControlShift.Spike</RootNamespace>
+    <AssemblyName>ControlShift.Spike</AssemblyName>
+    <!-- x64 only — ViGEmBus driver is x64 on modern Windows -->
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Spike is a developer tool — no app manifest, admin check done at runtime -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Same package versions as ControlShift.Core — keep in sync -->
+    <PackageReference Include="Nefarius.ViGEm.Client"      Version="1.21.256" />
+    <PackageReference Include="Nefarius.Drivers.HidHide"   Version="3.3.0"   />
+    <PackageReference Include="Vortice.XInput"              Version="3.8.2"   />
+    <PackageReference Include="HidSharp"                    Version="2.6.4"   />
+  </ItemGroup>
+
+</Project>
