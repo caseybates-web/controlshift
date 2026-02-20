@@ -82,7 +82,7 @@ jobs:
     - name: Prepare release asset
       shell: bash
       run: |
-        cp "src/ControlShift.Bundle/bin/x64/Release/en-US/ControlShift.Bundle.exe" \
+        cp "src/ControlShift.Bundle/bin/x64/Release/ControlShift.Bundle.exe" \
            "ControlShift-Setup-${{ env.VERSION }}.exe"
 
     - name: Create GitHub Release
