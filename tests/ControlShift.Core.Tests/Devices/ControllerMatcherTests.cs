@@ -370,6 +370,44 @@ public class ControllerMatcherTests
         Assert.Equal("Xbox 360 Controller", result[0].Hid?.ProductName);
     }
 
+    // ── wired/wireless pool split ─────────────────────────────────────────────
+
+    [Fact]
+    public void Match_TwoXboxControllersWithSameIgMarker_WiredSlotGetsUsb_WirelessSlotGetsBt()
+    {
+        // Real-world scenario: USB Xbox (PID=02FF) and BLE Xbox (PID=0B13) both
+        // expose ig_00 in their HID paths regardless of XInput slot. IG_0N matching
+        // alone is ambiguous. The matcher must use slot.ConnectionType (from
+        // XINPUT_CAPS_WIRELESS) + bus-type pools to assign them correctly.
+        var usbXbox = new HidDeviceInfo("045E", "02FF", "Controller (Xbox One For Windows)",
+            @"\\?\hid#vid_045e&pid_02ff&ig_00#7&286a539d&1&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}");
+        var bleXbox = new HidDeviceInfo("045E", "0B13", null,
+            @"\\?\hid#{00001812-0000-1000-8000-00805f9b34fb}&dev&vid_045e&pid_0b13&ig_00#9&3a22ae3&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}");
+
+        var busDetector = new Mock<IPnpBusDetector>();
+        busDetector.Setup(d => d.DetectBusType(usbXbox.DevicePath)).Returns(BusType.Usb);
+        busDetector.Setup(d => d.DetectBusType(bleXbox.DevicePath)).Returns(BusType.BluetoothLE);
+
+        var matcher = MakeMatcher(busDetector: busDetector.Object);
+        var slots = new[]
+        {
+            ConnectedSlot(0, XInputConnectionType.Wired),
+            ConnectedSlot(1, XInputConnectionType.Wireless),
+        };
+
+        var result = matcher.Match(slots, [usbXbox, bleXbox]);
+
+        // Slot 0 (wired) → USB Xbox via xboxUsbPool
+        Assert.Equal("02FF", result[0].Hid?.Pid);
+        Assert.Equal(BusType.Usb, result[0].BusType);
+        Assert.Equal(HidConnectionType.Usb, result[0].HidConnectionType);
+
+        // Slot 1 (wireless) → BLE Xbox via xboxWirelessPool (no ig_01 match, pool fallback)
+        Assert.Equal("0B13", result[1].Hid?.Pid);
+        Assert.Equal(BusType.BluetoothLE, result[1].BusType);
+        Assert.Equal(HidConnectionType.Bluetooth, result[1].HidConnectionType);
+    }
+
     // ── result count ─────────────────────────────────────────────────────────
 
     [Fact]

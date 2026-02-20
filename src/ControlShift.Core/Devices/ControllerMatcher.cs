@@ -48,7 +48,37 @@ public sealed class ControllerMatcher : IControllerMatcher
             Debug.WriteLine($"          path={h.DevicePath}");
         }
 
-        // ── Single-pass exact IG_0N match ──────────────────────────────────────
+        // ── Phase 0: pre-classify VID=045E HID devices ────────────────────────
+        // When two Xbox controllers are connected, both may expose ig_00 in their
+        // HID paths regardless of which XInput slot they occupy. IG_0N matching
+        // alone cannot disambiguate them. We pre-classify all 045E devices by
+        // bus type (Usb vs Bluetooth) so Phase 1 can route each XInput slot to
+        // the correctly-typed device using slot.ConnectionType (XINPUT_CAPS_WIRELESS).
+        var busTypeCache    = new Dictionary<string, BusType>(StringComparer.OrdinalIgnoreCase);
+        var xboxUsbPool     = new List<HidDeviceInfo>();
+        var xboxWirelessPool = new List<HidDeviceInfo>();
+
+        foreach (var hid in hidDevices)
+        {
+            if (!string.Equals(hid.Vid, "045E", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var bt = _busDetector.DetectBusType(hid.DevicePath);
+            busTypeCache[hid.DevicePath] = bt;
+
+            if (bt == BusType.Usb)
+                xboxUsbPool.Add(hid);
+            else if (bt is BusType.BluetoothLE or BusType.BluetoothClassic or BusType.XboxWirelessAdapter)
+                xboxWirelessPool.Add(hid);
+        }
+
+        bool hasXboxPools = xboxUsbPool.Count > 0 || xboxWirelessPool.Count > 0;
+        Debug.WriteLine($"[ControllerMatcher] Xbox pools: USB={xboxUsbPool.Count} " +
+                        $"wireless={xboxWirelessPool.Count} hasXboxPools={hasXboxPools}");
+
+        // ── Phase 1: per-slot matching ─────────────────────────────────────────
+        var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         for (int i = 0; i < xinputSlots.Count; i++)
         {
             var slot = xinputSlots[i];
@@ -60,38 +90,71 @@ public sealed class ControllerMatcher : IControllerMatcher
                 continue;
             }
 
-            string igMarker = $"IG_0{slot.SlotIndex}";
-            Debug.WriteLine($"  Slot{slot.SlotIndex}: connected — searching for '{igMarker}' " +
-                            $"in {hidDevices.Count} HID devices");
+            string igMarker    = $"IG_0{slot.SlotIndex}";
+            bool slotIsWireless = slot.ConnectionType == XInputConnectionType.Wireless;
 
-            HidDeviceInfo?       hid    = null;
-            FingerprintedDevice? fp     = null;
-            int                  hidIdx = -1;
+            Debug.WriteLine($"  Slot{slot.SlotIndex}: connected wireless={slotIsWireless} " +
+                            $"igMarker={igMarker}");
 
-            for (int d = 0; d < hidDevices.Count; d++)
+            // Collect unmatched devices whose path contains this slot's IG marker.
+            var igCandidates = hidDevices
+                .Where(h => !usedPaths.Contains(h.DevicePath)
+                         && h.DevicePath.IndexOf(igMarker, StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToList();
+
+            HidDeviceInfo? hid = null;
+
+            if (igCandidates.Count == 1)
             {
-                var h = hidDevices[d];
-                if (h.DevicePath.IndexOf(igMarker, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    hid    = h;
-                    hidIdx = d;
-                    fp     = fingerprinted.FirstOrDefault(f => f.Device.DevicePath == h.DevicePath);
-                    Debug.WriteLine($"  Slot{slot.SlotIndex}: MATCH hidIndex={d} VID={h.Vid} PID={h.Pid} " +
-                                    $"name='{h.ProductName}'");
-                    Debug.WriteLine($"    path={h.DevicePath}");
-                    break;
-                }
+                // Unambiguous IG_0N match — use it directly.
+                hid = igCandidates[0];
+                Debug.WriteLine($"    unambiguous IG match: VID={hid.Vid} PID={hid.Pid}");
+            }
+            else if (igCandidates.Count > 1
+                  && igCandidates.All(h => string.Equals(h.Vid, "045E", StringComparison.OrdinalIgnoreCase)))
+            {
+                // Multiple VID=045E candidates share the same IG_0N (real-world Xbox
+                // behavior). Use slot connection type to pick from the appropriate pool.
+                var pool = slotIsWireless ? xboxWirelessPool : xboxUsbPool;
+                hid = pool.FirstOrDefault(h => !usedPaths.Contains(h.DevicePath)
+                                            && igCandidates.Contains(h));
+                // Pool exhausted (e.g. bus type unknown for all pool members): fall
+                // back to first available candidate.
+                hid ??= igCandidates.FirstOrDefault(h => !usedPaths.Contains(h.DevicePath));
+                Debug.WriteLine($"    pool disambiguate ({(slotIsWireless ? "wireless" : "wired")}): " +
+                                $"VID={hid?.Vid ?? "none"} PID={hid?.Pid ?? "none"}");
+            }
+            else if (igCandidates.Count > 1)
+            {
+                // Mixed VIDs with the same IG_0N (unusual). Prefer non-045E first since
+                // 045E is likely already claimed by pool logic in another slot.
+                hid = igCandidates
+                    .OrderByDescending(h => !string.Equals(h.Vid, "045E", StringComparison.OrdinalIgnoreCase))
+                    .First(h => !usedPaths.Contains(h.DevicePath));
+                Debug.WriteLine($"    mixed-VID fallback: VID={hid?.Vid} PID={hid?.Pid}");
+            }
+            else // igCandidates.Count == 0
+            {
+                // No IG_0N match. For VID=045E controllers whose drivers always expose
+                // ig_00 regardless of slot, try the appropriate bus-type pool.
+                var pool = slotIsWireless ? xboxWirelessPool : xboxUsbPool;
+                hid = pool.FirstOrDefault(h => !usedPaths.Contains(h.DevicePath));
+                Debug.WriteLine($"    no IG match — pool fallback ({(slotIsWireless ? "wireless" : "wired")}): " +
+                                $"VID={hid?.Vid ?? "none"} PID={hid?.Pid ?? "none"}");
             }
 
             if (hid is null)
             {
-                Debug.WriteLine($"  Slot{slot.SlotIndex}: NO MATCH for '{igMarker}' — " +
-                                $"checked {hidDevices.Count} device(s)");
+                Debug.WriteLine($"  Slot{slot.SlotIndex}: NO MATCH");
                 results[i] = BuildNoHidResult(slot);
             }
             else
             {
-                results[i] = BuildResult(slot, hid, fp);
+                usedPaths.Add(hid.DevicePath);
+                var fp = fingerprinted.FirstOrDefault(f => f.Device.DevicePath == hid.DevicePath);
+                if (!busTypeCache.TryGetValue(hid.DevicePath, out BusType busType))
+                    busType = _busDetector.DetectBusType(hid.DevicePath);
+                results[i] = BuildResult(slot, hid, fp, busType);
             }
         }
 
@@ -101,9 +164,8 @@ public sealed class ControllerMatcher : IControllerMatcher
     // ── Result builders ────────────────────────────────────────────────────────
 
     private MatchedController BuildResult(
-        XInputSlotInfo slot, HidDeviceInfo hid, FingerprintedDevice? fp)
+        XInputSlotInfo slot, HidDeviceInfo hid, FingerprintedDevice? fp, BusType busType)
     {
-        var busType  = _busDetector.DetectBusType(hid.DevicePath);
         var connType = ToHidConnectionType(busType);
         var brand    = _vendors.GetBrand(hid.Vid);
         Debug.WriteLine($"  BuildResult Slot{slot.SlotIndex}: brand='{brand ?? "(none)"}' " +

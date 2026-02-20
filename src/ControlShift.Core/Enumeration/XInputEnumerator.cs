@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Vortice.XInput;
 
 namespace ControlShift.Core.Enumeration;
@@ -14,9 +15,64 @@ namespace ControlShift.Core.Enumeration;
 /// - BatteryType.Nimh (not NiMH) is the NiMH enum value.
 /// - DeviceType enum only has one value (Gamepad = 1); SubType carries the finer
 ///   distinction (Gamepad, Wheel, etc.) but we don't surface that in v1.
+///
+/// Wireless detection: <see cref="IsWirelessViaCaps"/> uses a raw P/Invoke on
+/// xinput1_4.dll to read XINPUT_CAPABILITIES.Flags bit 0x0002 (XINPUT_CAPS_WIRELESS).
+/// This is more reliable than BatteryInformation.BatteryType, which reports
+/// BatteryType.Wired for BLE Xbox controllers despite them being wireless.
 /// </remarks>
 public sealed class XInputEnumerator : IXInputEnumerator
 {
+    // ── Raw XINPUT_CAPABILITIES P/Invoke ──────────────────────────────────────
+    // Vortice.XInput 3.8.2 does not expose XINPUT_CAPABILITIES.Flags directly.
+    // We declare our own struct + import to access the XINPUT_CAPS_WIRELESS flag.
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    private struct XINPUT_CAPABILITIES
+    {
+        public byte   Type;
+        public byte   SubType;
+        public ushort Flags;
+        // XINPUT_GAMEPAD (12 bytes)
+        public ushort Buttons;
+        public byte   LeftTrigger;
+        public byte   RightTrigger;
+        public short  ThumbLX;
+        public short  ThumbLY;
+        public short  ThumbRX;
+        public short  ThumbRY;
+        // XINPUT_VIBRATION (4 bytes)
+        public ushort LeftMotorSpeed;
+        public ushort RightMotorSpeed;
+    }
+
+    private const ushort XINPUT_CAPS_WIRELESS = 0x0002;
+    private const uint   XINPUT_FLAG_GAMEPAD  = 1;
+
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputGetCapabilities")]
+    private static extern uint RawGetCapabilities(
+        uint dwUserIndex, uint dwFlags, out XINPUT_CAPABILITIES pCapabilities);
+
+    /// <summary>
+    /// Returns true when the XINPUT_CAPS_WIRELESS flag is set for the given slot.
+    /// This is the reliable wireless indicator — BatteryInformation.BatteryType
+    /// incorrectly reports Wired for BLE Xbox controllers.
+    /// </summary>
+    private static bool IsWirelessViaCaps(int slotIndex)
+    {
+        try
+        {
+            uint result = RawGetCapabilities((uint)slotIndex, XINPUT_FLAG_GAMEPAD, out var caps);
+            return result == 0 && (caps.Flags & XINPUT_CAPS_WIRELESS) != 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // ── IXInputEnumerator ─────────────────────────────────────────────────────
+
     public IReadOnlyList<XInputSlotInfo> GetSlots()
     {
         var results = new XInputSlotInfo[4];
@@ -48,22 +104,18 @@ public sealed class XInputEnumerator : IXInputEnumerator
             ? XInputDeviceType.Gamepad
             : XInputDeviceType.Unknown;
 
-        // GetBatteryInformation returns true when information is available.
-        // BatteryType.Wired (1) and BatteryType.Disconnected (0) / Unknown (255)
-        // indicate no battery; Alkaline (2) and Nimh (3) indicate wireless.
+        // DECISION: Use XINPUT_CAPS_WIRELESS flag (bit 0x0002 in XINPUT_CAPABILITIES.Flags)
+        // as the authoritative wireless indicator. BatteryInformation.BatteryType is NOT
+        // reliable — Xbox BLE controllers report BatteryType.Wired even when wireless.
+        bool isWireless = IsWirelessViaCaps(slotIndex);
+
+        // Battery query: still needed for level display on truly wireless controllers.
         bool hasBattery = XInput.GetBatteryInformation(
             userIndex, BatteryDeviceType.Gamepad, out BatteryInformation battery);
 
-        Debug.WriteLine($"[XInput] Slot{slotIndex}: hasBattery={hasBattery} " +
+        Debug.WriteLine($"[XInput] Slot{slotIndex}: isWireless={isWireless} hasBattery={hasBattery} " +
                         $"type={(int)battery.BatteryType}({battery.BatteryType}) " +
                         $"level={(int)battery.BatteryLevel}({battery.BatteryLevel})");
-
-        // Wireless = battery present AND type is neither Wired nor Disconnected.
-        // BatteryType.Unknown is allowed — some wireless receivers report Unknown
-        // transiently while the controller is still clearly not cable-connected.
-        bool isWireless = hasBattery
-            && battery.BatteryType != BatteryType.Wired
-            && battery.BatteryType != BatteryType.Disconnected;
 
         int? batteryPercent = null;
         if (isWireless)
