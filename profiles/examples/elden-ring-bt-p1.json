@@ -1,9 +1,0 @@
-{
-  "profileName": "Elden Ring - BT Controller as P1",
-  "gameExe": "eldenring.exe",
-  "gamePath": null,
-  "slotAssignments": ["bt-controller-device-path", null, null, null],
-  "suppressIntegrated": true,
-  "antiCheatGame": false,
-  "createdAt": "2026-02-18T00:00:00Z"
-}

@@ -13,7 +13,6 @@ using ControlShift.Core.Devices;
 using ControlShift.Core.Enumeration;
 using ControlShift.Core.Forwarding;
 using ControlShift.Core.Models;
-using ControlShift.Core.Profiles;
 
 namespace ControlShift.App;
 
@@ -51,16 +50,8 @@ public sealed partial class MainWindow : Window
     // ── Forwarding stack ─────────────────────────────────────────────────────
 
     private readonly IInputForwardingService _forwardingService;
-    private readonly IProfileStore   _profileStore;
     private readonly SlotOrderStore  _slotOrderStore = new();
     private readonly NicknameStore   _nicknameStore  = new();
-
-    // ── Process watcher + anticheat ─────────────────────────────────────────
-
-    private readonly IProcessWatcher  _processWatcher;
-    private readonly AntiCheatDatabase _antiCheatDb;
-    /// <summary>Profile that was auto-applied by process watcher (null = manual/none).</summary>
-    private Profile? _autoAppliedProfile;
 
     // ── Navigation state ──────────────────────────────────────────────────────
 
@@ -124,25 +115,10 @@ public sealed partial class MainWindow : Window
 
     // ── Construction ──────────────────────────────────────────────────────────
 
-    public MainWindow(IInputForwardingService forwardingService, IProfileStore profileStore)
+    public MainWindow(IInputForwardingService forwardingService)
     {
         _forwardingService = forwardingService;
         _forwardingService.ForwardingError += OnForwardingError;
-        _profileStore = profileStore;
-
-        // Initialize anticheat database (best-effort — falls back to empty).
-        string antiCheatPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "anticheat-games.json");
-        try   { _antiCheatDb = AntiCheatDatabase.FromFile(antiCheatPath); }
-        catch (Exception ex)
-        {
-            NavLog($"WARNING: Failed to load anticheat database — anticheat games will NOT be auto-detected: {ex.Message}");
-            _antiCheatDb = new AntiCheatDatabase(Array.Empty<AntiCheatEntry>());
-        }
-
-        // Initialize WMI process watcher for auto-apply/auto-revert.
-        _processWatcher = new WmiProcessWatcher();
-        _processWatcher.ProcessStarted += OnProcessStarted;
-        _processWatcher.ProcessStopped += OnProcessStopped;
 
         InitializeComponent();
 
@@ -221,9 +197,6 @@ public sealed partial class MainWindow : Window
 
         // Initial scan on window open.
         _ = RefreshAsync();
-
-        // Start watching for game processes that have saved profiles.
-        InitializeProcessWatcher();
     }
 
     // ── Navigation: deferred setup ────────────────────────────────────────────
@@ -240,10 +213,6 @@ public sealed partial class MainWindow : Window
         // Wire focus tracking on footer buttons (cards are wired dynamically in EnsureCards).
         RevertButton.GotFocus       += (_, _) => OnElementGotFocus(RevertButton);
         RevertButton.LostFocus      += (_, _) => OnElementLostFocus(RevertButton);
-        SaveProfileButton.GotFocus  += (_, _) => OnElementGotFocus(SaveProfileButton);
-        SaveProfileButton.LostFocus += (_, _) => OnElementLostFocus(SaveProfileButton);
-        ProfilesButton.GotFocus     += (_, _) => OnElementGotFocus(ProfilesButton);
-        ProfilesButton.LostFocus    += (_, _) => OnElementLostFocus(ProfilesButton);
         ExitButton.GotFocus         += (_, _) => OnElementGotFocus(ExitButton);
         ExitButton.LostFocus        += (_, _) => OnElementLostFocus(ExitButton);
 
@@ -472,19 +441,18 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Returns all visible, focusable elements in top-to-bottom visual order:
-    /// first all SlotCards from SlotPanel, then visible footer buttons.
+    /// FullScreenToggle (header), then SlotCards, then visible footer buttons.
     /// </summary>
     private List<UIElement> GetFocusableElementsInOrder()
     {
         var elements = new List<UIElement>();
+        elements.Add(FullScreenToggle);
+
         foreach (var card in _cards)
             elements.Add(card);
 
         if (RevertButton.Visibility == Visibility.Visible)
             elements.Add(RevertButton);
-        elements.Add(SaveProfileButton);
-        elements.Add(FullScreenToggle);
-        elements.Add(ProfilesButton);
         elements.Add(ExitButton);
 
         return elements;
@@ -509,7 +477,6 @@ public sealed partial class MainWindow : Window
         _navTimer.Stop();
         _watchdogTimer.Stop();
         _holdTimer.Stop();
-        _processWatcher.Dispose();
         _forwardingService.Dispose();
     }
 
@@ -574,376 +541,6 @@ public sealed partial class MainWindow : Window
         {
             if (!_forwardingService.IsForwarding && RevertButton is not null)
                 RevertButton.Visibility = Visibility.Collapsed;
-        });
-    }
-
-    // ── Profiles ──────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// P/Invoke helpers for detecting the foreground application's EXE name.
-    /// Used by "Save Profile" to auto-populate the game exe field.
-    /// </summary>
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-    private static string? GetForegroundExeName()
-    {
-        try
-        {
-            var hwnd = GetForegroundWindow();
-            if (hwnd == IntPtr.Zero) return null;
-            GetWindowThreadProcessId(hwnd, out uint pid);
-            if (pid == 0) return null;
-            var proc = Process.GetProcessById((int)pid);
-            return Path.GetFileName(proc.MainModule?.FileName);
-        }
-        catch { return null; }
-    }
-
-    private async void SaveProfileButton_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            // Auto-detect foreground EXE (likely the game the user wants to profile).
-            // Note: ControlShift itself will often be the foreground app, so this is
-            // a best-effort hint that the user can override.
-            string? detectedExe = GetForegroundExeName();
-            string defaultName = detectedExe is not null
-                ? Path.GetFileNameWithoutExtension(detectedExe)
-                : "New Profile";
-
-            // Build a simple dialog for profile name and game exe.
-            var nameBox = new TextBox
-            {
-                Text = defaultName,
-                PlaceholderText = "Profile name",
-                Margin = new Thickness(0, 0, 0, 8),
-            };
-            var exeBox = new TextBox
-            {
-                Text = detectedExe ?? string.Empty,
-                PlaceholderText = "Game executable (e.g. game.exe) — optional",
-            };
-
-            var panel = new StackPanel();
-            panel.Children.Add(new TextBlock { Text = "Profile Name:", Margin = new Thickness(0, 0, 0, 4) });
-            panel.Children.Add(nameBox);
-            panel.Children.Add(new TextBlock { Text = "Game Executable:", Margin = new Thickness(0, 8, 0, 4) });
-            panel.Children.Add(exeBox);
-
-            var dialog = new ContentDialog
-            {
-                Title = "Save Profile",
-                Content = panel,
-                PrimaryButtonText = "Save",
-                CloseButtonText = "Cancel",
-                XamlRoot = Content.XamlRoot,
-            };
-
-            var result = await dialog.ShowAsync();
-            if (result != ContentDialogResult.Primary) return;
-
-            string profileName = nameBox.Text?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(profileName)) return;
-
-            string? gameExe = string.IsNullOrWhiteSpace(exeBox.Text) ? null : exeBox.Text.Trim();
-
-            // Build profile from current card order using VID:PID.
-            var slotAssignments = new string?[4];
-            for (int i = 0; i < _cards.Count && i < 4; i++)
-            {
-                var vidPid = _cards[i].VidPid;
-                slotAssignments[i] = string.IsNullOrEmpty(vidPid) ? null : vidPid;
-            }
-
-            // Check anticheat database and auto-flag if needed.
-            bool isAntiCheat = gameExe is not null && _antiCheatDb.IsAntiCheatGame(gameExe);
-            if (isAntiCheat)
-            {
-                var warnDialog = new ContentDialog
-                {
-                    Title = "Anticheat Game Detected",
-                    Content = $"{gameExe} uses kernel-level anticheat.\n\n" +
-                              "ControlShift will automatically STOP forwarding when this game " +
-                              "launches to avoid detection. The profile will still be saved for " +
-                              "manual use in non-anticheat scenarios.",
-                    PrimaryButtonText = "OK",
-                    CloseButtonText = "Cancel",
-                    XamlRoot = Content.XamlRoot,
-                };
-
-                var warnResult = await warnDialog.ShowAsync();
-                if (warnResult != ContentDialogResult.Primary) return;
-            }
-
-            var profile = new Profile
-            {
-                ProfileName = profileName,
-                GameExe = gameExe,
-                SlotAssignments = slotAssignments,
-                AntiCheatGame = isAntiCheat,
-                CreatedAt = DateTimeOffset.UtcNow,
-            };
-
-            _profileStore.Save(profile);
-            NavLog($"[Profile] Saved: {profileName} (exe={gameExe ?? "none"}, anticheat={isAntiCheat})");
-
-            // Refresh process watcher to include the new profile's exe.
-            InitializeProcessWatcher();
-        }
-        catch (Exception ex)
-        {
-            NavLog($"[Profile] Save failed: {ex.Message}");
-        }
-    }
-
-    private async void ProfilesButton_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var profiles = _profileStore.LoadAll();
-
-            if (profiles.Count == 0)
-            {
-                var emptyDialog = new ContentDialog
-                {
-                    Title = "Profiles",
-                    Content = "No saved profiles. Reorder your controllers, then tap \"Save Profile\" to create one.",
-                    CloseButtonText = "OK",
-                    XamlRoot = Content.XamlRoot,
-                };
-                await emptyDialog.ShowAsync();
-                return;
-            }
-
-            // Build a simple list of profile names for selection.
-            var listView = new ListView
-            {
-                SelectionMode = ListViewSelectionMode.Single,
-                MaxHeight = 300,
-            };
-            foreach (var p in profiles)
-            {
-                string label = p.ProfileName;
-                if (p.GameExe is not null)
-                    label += $" ({p.GameExe})";
-                listView.Items.Add(label);
-            }
-            if (listView.Items.Count > 0)
-                listView.SelectedIndex = 0;
-
-            var dialog = new ContentDialog
-            {
-                Title = "Load Profile",
-                Content = listView,
-                PrimaryButtonText = "Load",
-                SecondaryButtonText = "Delete",
-                CloseButtonText = "Cancel",
-                XamlRoot = Content.XamlRoot,
-            };
-
-            var result = await dialog.ShowAsync();
-            int selectedIdx = listView.SelectedIndex;
-            if (selectedIdx < 0 || selectedIdx >= profiles.Count) return;
-
-            var selected = profiles[selectedIdx];
-
-            if (result == ContentDialogResult.Primary)
-            {
-                await LoadProfileAsync(selected);
-            }
-            else if (result == ContentDialogResult.Secondary)
-            {
-                _profileStore.Delete(selected.ProfileName);
-                NavLog($"[Profile] Deleted: {selected.ProfileName}");
-                InitializeProcessWatcher();
-            }
-        }
-        catch (Exception ex)
-        {
-            NavLog($"[Profile] Load/delete failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Resolves a profile's VID:PID assignments to current device paths,
-    /// reorders the cards to match, and starts forwarding.
-    /// </summary>
-    private async Task LoadProfileAsync(Profile profile)
-    {
-        try
-        {
-            // Build connected-controller tuples from current cards.
-            var connected = _cards
-                .Select(c => (VidPid: c.VidPid, DevicePath: c.DevicePath))
-                .Where(t => !string.IsNullOrEmpty(t.VidPid))
-                .ToList();
-
-            var assignments = ProfileResolver.Resolve(profile, connected);
-
-            // Reorder _cards to match profile's slot order.
-            // For each assignment that resolved a device path, find the matching card.
-            _suppressFocusEvents = true;
-            try
-            {
-                var newOrder = new List<SlotCard>();
-                var remaining = new List<SlotCard>(_cards);
-
-                foreach (var assignment in assignments)
-                {
-                    if (assignment.SourceDevicePath is null) continue;
-
-                    var match = remaining.FirstOrDefault(c =>
-                        string.Equals(c.DevicePath, assignment.SourceDevicePath,
-                            StringComparison.OrdinalIgnoreCase));
-
-                    if (match is not null)
-                    {
-                        newOrder.Add(match);
-                        remaining.Remove(match);
-                    }
-                }
-
-                // Append any remaining cards that weren't in the profile.
-                newOrder.AddRange(remaining);
-
-                ReplaceCardOrder(newOrder);
-            }
-            finally
-            {
-                _suppressFocusEvents = false;
-            }
-
-            // Start forwarding with the new order.
-            await ApplyForwardingAsync();
-            SaveCurrentOrder();
-            NavLog($"[Profile] Loaded: {profile.ProfileName}");
-        }
-        catch (Exception ex)
-        {
-            NavLog($"[Profile] Load failed: {ex.Message}");
-        }
-    }
-
-    // ── Process watcher ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Collects all game exe names from saved profiles and starts the WMI
-    /// process watcher. Called on startup and after profile save/delete.
-    /// </summary>
-    private void InitializeProcessWatcher()
-    {
-        try
-        {
-            var profiles = _profileStore.LoadAll();
-            var exeNames = profiles
-                .Where(p => p.GameExe is not null)
-                .Select(p => p.GameExe!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (exeNames.Count > 0)
-            {
-                _processWatcher.StartWatching(exeNames);
-                NavLog($"[ProcessWatcher] Watching {exeNames.Count} exe(s): [{string.Join(", ", exeNames)}]");
-            }
-            else
-            {
-                _processWatcher.StopWatching();
-                NavLog("[ProcessWatcher] No profiles with game exe — stopped watching");
-            }
-        }
-        catch (Exception ex)
-        {
-            NavLog($"[ProcessWatcher] Init failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Fires on a WMI worker thread when a watched process starts.
-    /// Marshals to the UI thread via DispatcherQueue.
-    /// </summary>
-    private void OnProcessStarted(object? sender, ProcessEventArgs e)
-    {
-        NavLog($"[ProcessWatcher] Process started: {e.ProcessName} (PID {e.ProcessId})");
-
-        DispatcherQueue.TryEnqueue(async () =>
-        {
-            try
-            {
-                var profile = _profileStore.FindByGameExe(e.ProcessName);
-                if (profile is null)
-                {
-                    NavLog($"[ProcessWatcher] No profile for {e.ProcessName}");
-                    return;
-                }
-
-                // ANTICHEAT SAFETY: If the game uses anticheat, STOP forwarding
-                // immediately rather than starting it. Win32_ProcessStartTrace fires
-                // at CreateProcess() time, giving ~2-5s before anticheat drivers scan.
-                if (profile.AntiCheatGame || _antiCheatDb.IsAntiCheatGame(e.ProcessName))
-                {
-                    NavLog($"[ProcessWatcher] Anticheat game detected — stopping forwarding for {e.ProcessName}");
-                    if (_forwardingService.IsForwarding)
-                    {
-                        await _forwardingService.StopForwardingAsync();
-                        _autoAppliedProfile = null;
-                        if (RevertButton is not null)
-                            RevertButton.Visibility = Visibility.Collapsed;
-                        NavLog("[ProcessWatcher] Forwarding stopped (anticheat safety)");
-                    }
-                    return;
-                }
-
-                // Non-anticheat game: auto-apply the profile.
-                NavLog($"[ProcessWatcher] Auto-applying profile '{profile.ProfileName}' for {e.ProcessName}");
-                _autoAppliedProfile = profile;
-                await LoadProfileAsync(profile);
-            }
-            catch (Exception ex)
-            {
-                NavLog($"[ProcessWatcher] OnProcessStarted error: {ex.Message}");
-            }
-        });
-    }
-
-    /// <summary>
-    /// Fires on a WMI worker thread when a watched process exits.
-    /// If an auto-applied profile is active, stops forwarding.
-    /// </summary>
-    private void OnProcessStopped(object? sender, ProcessEventArgs e)
-    {
-        NavLog($"[ProcessWatcher] Process stopped: {e.ProcessName} (PID {e.ProcessId})");
-
-        DispatcherQueue.TryEnqueue(async () =>
-        {
-            try
-            {
-                // Only auto-revert if the exiting process matches the auto-applied profile.
-                if (_autoAppliedProfile?.GameExe is null) return;
-
-                if (!string.Equals(_autoAppliedProfile.GameExe, e.ProcessName,
-                        StringComparison.OrdinalIgnoreCase))
-                    return;
-
-                NavLog($"[ProcessWatcher] Auto-applied game exited — stopping forwarding");
-                _autoAppliedProfile = null;
-
-                if (_forwardingService.IsForwarding)
-                {
-                    await _forwardingService.StopForwardingAsync();
-                    if (RevertButton is not null)
-                        RevertButton.Visibility = Visibility.Collapsed;
-                    _ = RefreshAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                NavLog($"[ProcessWatcher] OnProcessStopped error: {ex.Message}");
-            }
         });
     }
 
@@ -1117,9 +714,14 @@ public sealed partial class MainWindow : Window
 
                 if (_isFullScreen)
                 {
-                    // Horizontal card row: left/right navigates between cards,
-                    // down from any card → first footer button, up from footer → last card.
+                    // Layout zones in elements list:
+                    //   [0] = FullScreenToggle (header)
+                    //   [1.._cards.Count] = cards (horizontal row)
+                    //   [_cards.Count+1..] = footer buttons (RevertAll, Exit)
                     int fsCardIdx = FocusedCardIndex;
+                    int footerStart = 1 + _cards.Count;
+
+                    // Left/right between cards
                     if (navLeft && fsCardIdx > 0)
                     {
                         NavLog($"[NavTick] → Focus card {fsCardIdx - 1} (left)");
@@ -1130,25 +732,39 @@ public sealed partial class MainWindow : Window
                         NavLog($"[NavTick] → Focus card {fsCardIdx + 1} (right)");
                         _cards[fsCardIdx + 1].Focus(FocusState.Programmatic);
                     }
-                    if (navDown && fsCardIdx >= 0)
+
+                    // Down from header → first card
+                    if (navDown && curIdx == 0 && _cards.Count > 0)
                     {
-                        // Down from card row → first footer button
-                        int firstBtn = _cards.Count; // index past cards in elements list
-                        if (firstBtn < elements.Count)
+                        NavLog("[NavTick] → Focus card 0 (down from header)");
+                        _cards[0].Focus(FocusState.Programmatic);
+                    }
+                    // Down from card row → first footer button
+                    else if (navDown && fsCardIdx >= 0)
+                    {
+                        if (footerStart < elements.Count)
                         {
-                            NavLog($"[NavTick] → Focus footer button (down from card)");
-                            elements[firstBtn].Focus(FocusState.Programmatic);
+                            NavLog("[NavTick] → Focus footer button (down from card)");
+                            elements[footerStart].Focus(FocusState.Programmatic);
                         }
                     }
-                    else if (navDown && curIdx >= _cards.Count && curIdx < elements.Count - 1)
+                    // Down within footer buttons
+                    else if (navDown && curIdx >= footerStart && curIdx < elements.Count - 1)
                     {
-                        // Down within footer buttons
                         NavLog($"[NavTick] → Focus element {curIdx + 1} (down in footer)");
                         elements[curIdx + 1].Focus(FocusState.Programmatic);
                     }
-                    if (navUp && curIdx > 0 && curIdx >= _cards.Count)
+
+                    // Up from card → header (FullScreenToggle)
+                    if (navUp && fsCardIdx >= 0)
                     {
-                        if (curIdx == _cards.Count)
+                        NavLog("[NavTick] → Focus FullScreenToggle (up from card)");
+                        elements[0].Focus(FocusState.Programmatic);
+                    }
+                    // Up from footer
+                    else if (navUp && curIdx >= footerStart)
+                    {
+                        if (curIdx == footerStart)
                         {
                             // Up from first footer button → last card
                             NavLog($"[NavTick] → Focus card {_cards.Count - 1} (up to cards)");
@@ -1161,13 +777,14 @@ public sealed partial class MainWindow : Window
                             elements[curIdx - 1].Focus(FocusState.Programmatic);
                         }
                     }
+
                     // Left/right in footer buttons
-                    if (navLeft && curIdx >= _cards.Count && curIdx > _cards.Count)
+                    if (navLeft && curIdx >= footerStart && curIdx > footerStart)
                     {
                         NavLog($"[NavTick] → Focus element {curIdx - 1} (left in footer)");
                         elements[curIdx - 1].Focus(FocusState.Programmatic);
                     }
-                    if (navRight && curIdx >= _cards.Count && curIdx < elements.Count - 1)
+                    if (navRight && curIdx >= footerStart && curIdx < elements.Count - 1)
                     {
                         NavLog($"[NavTick] → Focus element {curIdx + 1} (right in footer)");
                         elements[curIdx + 1].Focus(FocusState.Programmatic);
@@ -1238,9 +855,7 @@ public sealed partial class MainWindow : Window
     private void ActivateButton(Button btn)
     {
         if (btn == RevertButton) RevertButton_Click(btn, new RoutedEventArgs());
-        else if (btn == SaveProfileButton) SaveProfileButton_Click(btn, new RoutedEventArgs());
         else if (btn == FullScreenToggle) FullScreenToggle_Click(btn, new RoutedEventArgs());
-        else if (btn == ProfilesButton) ProfilesButton_Click(btn, new RoutedEventArgs());
         else if (btn == ExitButton) ExitButton_Click(btn, new RoutedEventArgs());
     }
 
@@ -1590,9 +1205,7 @@ public sealed partial class MainWindow : Window
     private void UpdateButtonFocusVisuals()
     {
         ApplyButtonFocusVisual(RevertButton, ReferenceEquals(_focusedElement, RevertButton));
-        ApplyButtonFocusVisual(SaveProfileButton, ReferenceEquals(_focusedElement, SaveProfileButton));
         ApplyButtonFocusVisual(FullScreenToggle, ReferenceEquals(_focusedElement, FullScreenToggle));
-        ApplyButtonFocusVisual(ProfilesButton, ReferenceEquals(_focusedElement, ProfilesButton));
         ApplyButtonFocusVisual(ExitButton, ReferenceEquals(_focusedElement, ExitButton));
     }
 
@@ -1678,15 +1291,9 @@ public sealed partial class MainWindow : Window
         FullScreenToggle.FontSize = 14 * s;
         FullScreenToggle.Padding  = new Thickness(6 * s, 4 * s, 6 * s, 4 * s);
 
-        // Profiles button
-        ProfilesButton.FontSize = 11 * s;
-        ProfilesButton.Padding  = new Thickness(10 * s, 4 * s, 10 * s, 4 * s);
-
         // Footer buttons
         RevertButton.FontSize      = 14 * s;
         RevertButton.Padding       = new Thickness(16 * s, 8 * s, 16 * s, 8 * s);
-        SaveProfileButton.FontSize = 14 * s;
-        SaveProfileButton.Padding  = new Thickness(16 * s, 8 * s, 16 * s, 8 * s);
         ExitButton.FontSize        = 14 * s;
         ExitButton.Padding         = new Thickness(16 * s, 10 * s, 16 * s, 16 * s);
     }

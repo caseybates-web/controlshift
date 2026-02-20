@@ -32,7 +32,6 @@
     <!-- Copy data files to the test output directory so FromFile tests can load them. -->
     <Content Include="..\..\devices\known-devices.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\devices\known-vendors.json" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\devices\anticheat-games.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="TestData\known-devices-test.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

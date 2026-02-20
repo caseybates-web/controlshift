@@ -1,6 +1,5 @@
 using Microsoft.UI.Xaml;
 using ControlShift.Core.Forwarding;
-using ControlShift.Core.Profiles;
 
 namespace ControlShift.App;
 
@@ -19,8 +18,7 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var forwardingService = new InputForwardingService(Program.HidHideService);
-        var profileStore = new ProfileStore();
-        var window = new MainWindow(forwardingService, profileStore);
+        var window = new MainWindow(forwardingService);
         window.Activate();
     }
 }
