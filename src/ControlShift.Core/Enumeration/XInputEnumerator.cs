@@ -20,6 +20,13 @@ namespace ControlShift.Core.Enumeration;
 /// xinput1_4.dll to read XINPUT_CAPABILITIES.Flags bit 0x0002 (XINPUT_CAPS_WIRELESS).
 /// This is more reliable than BatteryInformation.BatteryType, which reports
 /// BatteryType.Wired for BLE Xbox controllers despite them being wireless.
+///
+/// Ghost slot detection: ViGEm virtual controller nodes from previous sessions can
+/// linger in the PnP tree. GetCapabilities reports them as connected but GetState
+/// fails. We detect these once and cache the result — calling GetState repeatedly
+/// on ghost slots triggers Windows device enumeration events (connect/disconnect
+/// chime). The cache is cleared when GetCapabilities reports disconnected for a
+/// previously-ghost slot (meaning the node was cleaned up or a real device arrived).
 /// </remarks>
 public sealed class XInputEnumerator : IXInputEnumerator
 {
@@ -71,6 +78,17 @@ public sealed class XInputEnumerator : IXInputEnumerator
         }
     }
 
+    // ── Ghost slot cache ────────────────────────────────────────────────────────
+    // Slots where GetCapabilities reports connected but GetState fails are ghost
+    // ViGEm nodes. We probe once with GetState and cache the result to avoid
+    // triggering Windows device enumeration events on every poll cycle.
+    //
+    // _confirmedReal[i] = true  → slot i passed GetState, treat as real on future polls
+    // _confirmedReal[i] = false → slot i failed GetState (ghost), skip on future polls
+    // _confirmedReal[i] = null  → slot i has not been probed yet (or was reset)
+
+    private readonly bool?[] _confirmedReal = new bool?[4];
+
     // ── IXInputEnumerator ─────────────────────────────────────────────────────
 
     public IReadOnlyList<XInputSlotInfo> GetSlots()
@@ -81,30 +99,54 @@ public sealed class XInputEnumerator : IXInputEnumerator
         return results;
     }
 
-    private static XInputSlotInfo QuerySlot(int slotIndex)
+    private XInputSlotInfo QuerySlot(int slotIndex)
     {
         var userIndex = (uint)slotIndex;
 
         // GetCapabilities returns true when a controller is connected at this slot.
         bool isConnected = XInput.GetCapabilities(userIndex, DeviceQueryType.Any, out Capabilities caps);
 
-        // DECISION: Ghost ViGEm device nodes (from previous sessions) can cause
-        // GetCapabilities to report a slot as connected even though no physical
-        // controller is present. Cross-check with GetState — if the device can't
-        // produce input state, it's a ghost and should be treated as disconnected.
-        if (isConnected)
+        if (!isConnected)
+        {
+            // Slot is disconnected. If it was previously a ghost, clear the cache
+            // so a real controller plugged in later gets a fresh GetState probe.
+            if (_confirmedReal[slotIndex] == false)
+            {
+                Debug.WriteLine($"[XInput] Slot{slotIndex}: previously ghost, now disconnected — clearing cache");
+                _confirmedReal[slotIndex] = null;
+            }
+
+            return new XInputSlotInfo(
+                slotIndex,
+                IsConnected: false,
+                XInputDeviceType.Unknown,
+                XInputConnectionType.Wired,
+                BatteryPercent: null);
+        }
+
+        // DECISION: Ghost ViGEm device nodes from previous sessions can cause
+        // GetCapabilities to report connected but GetState to fail. We only probe
+        // with GetState ONCE per slot to avoid triggering Windows device enumeration
+        // events (which cause connect/disconnect chimes every poll cycle).
+        if (_confirmedReal[slotIndex] == null)
         {
             bool hasState = XInput.GetState(userIndex, out _);
+            _confirmedReal[slotIndex] = hasState;
+
             if (!hasState)
             {
                 Debug.WriteLine($"[XInput] Slot{slotIndex}: GetCapabilities=connected but " +
-                                "GetState=ERROR_DEVICE_NOT_CONNECTED — treating as ghost/disconnected");
-                isConnected = false;
+                                "GetState=ERROR_DEVICE_NOT_CONNECTED — caching as ghost");
+            }
+            else
+            {
+                Debug.WriteLine($"[XInput] Slot{slotIndex}: confirmed real (GetState succeeded)");
             }
         }
 
-        if (!isConnected)
+        if (_confirmedReal[slotIndex] == false)
         {
+            // Cached ghost — report as disconnected without calling GetState again.
             return new XInputSlotInfo(
                 slotIndex,
                 IsConnected: false,
