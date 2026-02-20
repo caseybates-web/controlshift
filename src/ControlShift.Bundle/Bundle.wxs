@@ -48,9 +48,9 @@
                   DetectCondition="HidHideInstalled"
                   Vital="yes" />
 
-      <!-- ControlShift MSI — the main application. -->
+      <!-- ControlShift MSI — hardcoded path to avoid preprocessor variable issues. -->
       <MsiPackage Id="ControlShift"
-                  SourceFile="$(var.ControlShift.Installer.TargetPath)" />
+                  SourceFile="..\ControlShift.Installer\bin\x64\Release\ControlShift.Installer.msi" />
     </Chain>
 
   </Bundle>

@@ -10,11 +10,6 @@
     <DefineConstants>ProductVersion=$(ProductVersion)</DefineConstants>
   </PropertyGroup>
 
-  <!-- Reference the MSI project so we get $(var.ControlShift.Installer.TargetPath). -->
-  <ItemGroup>
-    <ProjectReference Include="..\ControlShift.Installer\ControlShift.Installer.wixproj" />
-  </ItemGroup>
-
   <!-- WiX extensions for Burn UI and registry search. -->
   <ItemGroup>
     <PackageReference Include="WixToolset.Bal.wixext" Version="6.0.2" />

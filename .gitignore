@@ -425,6 +425,7 @@ ui-*.html
 
 # WiX Toolset build outputs
 *.wixpdb
+src/ControlShift.Installer/AppFiles.wxs
 
 # Downloaded driver installers (fetched by CI)
 drivers/
