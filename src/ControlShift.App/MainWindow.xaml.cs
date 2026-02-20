@@ -96,8 +96,9 @@ public sealed partial class MainWindow : Window
         try   { vendorDb = VendorDatabase.FromFile(vendorsPath); }
         catch { vendorDb = new VendorDatabase(Array.Empty<KnownVendorEntry>()); }
 
-        var matcher = new ControllerMatcher(vendorDb, fingerprinter);
-        _viewModel  = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher);
+        var busDetector = new PnpBusDetector();
+        var matcher     = new ControllerMatcher(vendorDb, fingerprinter, busDetector);
+        _viewModel      = new MainViewModel(new XInputEnumerator(), new HidEnumerator(), matcher);
 
         SetWindowSize(400, 700);
 

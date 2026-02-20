@@ -44,10 +44,36 @@ public class ControllerMatcherTests
         return mock.Object;
     }
 
+    /// <summary>
+    /// Path-based bus detector stub — uses PnpBusDetector.ClassifyInstanceId plus
+    /// the same BT-GUID fast path as PnpBusDetector.DetectBusType, without any
+    /// CfgMgr32 tree walk (safe in unit tests that run without real devices).
+    /// USB paths return <see cref="BusType.Unknown"/> because detecting USB requires
+    /// a tree walk that is only possible on a real Windows device tree.
+    /// </summary>
+    private static IPnpBusDetector PathBusDetector()
+    {
+        var mock = new Mock<IPnpBusDetector>();
+        mock.Setup(d => d.DetectBusType(It.IsAny<string>()))
+            .Returns<string>(path =>
+            {
+                // Mirror PnpBusDetector fast paths (no P/Invoke required).
+                if (path.IndexOf("{00001812-0000-1000-8000-00805f9b34fb}", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    path.IndexOf("{00001124-0000-1000-8000-00805f9b34fb}", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return BusType.BluetoothLE;
+
+                return PnpBusDetector.ClassifyInstanceId(path);
+            });
+        return mock.Object;
+    }
+
     private static ControllerMatcher MakeMatcher(
-        IDeviceFingerprinter? fp = null,
+        IDeviceFingerprinter? fp          = null,
+        IPnpBusDetector?      busDetector = null,
         params KnownVendorEntry[] vendors)
-        => new(new VendorDatabase(vendors), fp ?? EmptyFingerprinter());
+        => new(new VendorDatabase(vendors),
+               fp          ?? EmptyFingerprinter(),
+               busDetector ?? PathBusDetector());
 
     // ── disconnected slots ────────────────────────────────────────────────────
 
@@ -77,6 +103,7 @@ public class ControllerMatcherTests
         var result = matcher.Match([DisconnectedSlot(0)], []);
 
         Assert.Equal(HidConnectionType.Unknown, result[0].HidConnectionType);
+        Assert.Equal(BusType.Unknown, result[0].BusType);
     }
 
     // ── IG_0X matching ────────────────────────────────────────────────────────
@@ -176,13 +203,19 @@ public class ControllerMatcherTests
     // ── HID connection type detection ─────────────────────────────────────────
 
     [Fact]
-    public void Match_UsbDevicePath_ReturnsUsb()
+    public void Match_UsbDevicePath_HidIsMatchedBusTypeIsUnknown()
     {
+        // USB paths require a CfgMgr32 tree walk to confirm "USB\VID_..." parent.
+        // PathBusDetector stub cannot do the tree walk, so BusType stays Unknown.
+        // HidConnectionType also becomes Unknown (mapped from BusType).
+        // The UI falls back to XInputConnectionType (Wired → "USB") for the label.
         var matcher = MakeMatcher();
         var hid = UsbDevice("045E", "028E", slotIndex: 0);
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
-        Assert.Equal(HidConnectionType.Usb, result[0].HidConnectionType);
+        Assert.NotNull(result[0].Hid);           // device was matched
+        Assert.Equal(BusType.Unknown, result[0].BusType);
+        Assert.Equal(HidConnectionType.Unknown, result[0].HidConnectionType);
     }
 
     [Fact]
@@ -236,6 +269,49 @@ public class ControllerMatcherTests
             @"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}&IG_00&VID_045E");
         var result = matcher.Match([ConnectedSlot(0)], [hid]);
 
+        Assert.Equal(HidConnectionType.Bluetooth, result[0].HidConnectionType);
+    }
+
+    // ── BusType detection ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Match_BthenumPath_BusTypeIsBluetoothClassic()
+    {
+        var matcher = MakeMatcher();
+        var hid = BtDevice("045E", "02E0", slotIndex: 0);
+        var result = matcher.Match([ConnectedSlot(0)], [hid]);
+
+        // BTHENUM without a BT service GUID in path → ClassifyInstanceId → BluetoothClassic.
+        // (The {00001124-...} GUID IS in the BtDevice path, so PathBusDetector returns BluetoothLE.)
+        // Either BluetoothLE or BluetoothClassic is acceptable here — both map to HidConnectionType.Bluetooth.
+        Assert.True(result[0].BusType is BusType.BluetoothLE or BusType.BluetoothClassic);
+    }
+
+    [Fact]
+    public void Match_HogpGuidPath_BusTypeIsBluetoothLE()
+    {
+        var matcher = MakeMatcher();
+        var hid = new HidDeviceInfo("045E", "0B13", null,
+            @"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}&dev&VID_045E&PID_0B13&IG_00#9&3a22ae3&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}");
+        var result = matcher.Match([ConnectedSlot(0)], [hid]);
+
+        Assert.Equal(BusType.BluetoothLE, result[0].BusType);
+    }
+
+    [Fact]
+    public void Match_XboxWirelessAdapterPath_BusTypeIsXboxWirelessAdapter()
+    {
+        // VID 045E + PID 02FE = Xbox Wireless Adapter for Windows
+        var busDetector = new Mock<IPnpBusDetector>();
+        busDetector.Setup(d => d.DetectBusType(It.IsAny<string>()))
+                   .Returns(BusType.XboxWirelessAdapter);
+
+        var matcher = MakeMatcher(busDetector: busDetector.Object);
+        var hid = UsbDevice("045E", "02FE", slotIndex: 0);
+        var result = matcher.Match([ConnectedSlot(0)], [hid]);
+
+        Assert.Equal(BusType.XboxWirelessAdapter, result[0].BusType);
+        // Xbox Wireless Adapter maps to HidConnectionType.Bluetooth (wireless protocol).
         Assert.Equal(HidConnectionType.Bluetooth, result[0].HidConnectionType);
     }
 

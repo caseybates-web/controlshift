@@ -77,7 +77,7 @@ public sealed class MainViewModel
                                           StringComparison.OrdinalIgnoreCase))
                         { hidIdx = d; break; }
 
-                sb.AppendLine($"Slot {mc.SlotIndex}: hidIndex={hidIdx}  VID={mc.Hid?.Vid ?? "(none)"}  PID={mc.Hid?.Pid ?? "(none)"}  hidConn={mc.HidConnectionType}  xinputConn={mc.XInputConnectionType}");
+                sb.AppendLine($"Slot {mc.SlotIndex}: hidIndex={hidIdx}  VID={mc.Hid?.Vid ?? "(none)"}  PID={mc.Hid?.Pid ?? "(none)"}  busType={mc.BusType}  hidConn={mc.HidConnectionType}  xinputConn={mc.XInputConnectionType}");
                 if (mc.Hid is not null)
                     sb.AppendLine($"         path={mc.Hid.DevicePath}");
                 sb.AppendLine();

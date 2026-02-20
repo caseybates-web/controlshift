@@ -11,22 +11,24 @@ namespace ControlShift.Core.Devices;
 ///   For each connected slot N, search for a HID device whose path contains "IG_0N".
 ///   No fallback passes — if the exact marker is absent, no match is made.
 ///
-/// Bluetooth detection: A device path is Bluetooth if it contains ANY of:
-///   "BTHENUM"                                — Classic Bluetooth HID
-///   "BTHLEDevice"                            — Bluetooth LE (Xbox Wireless on Win10/11)
-///   "{00001124-0000-1000-8000-00805f9b34fb}" — HID-over-GATT service UUID
-///   "BLUETOOTHLEDEVICE"                      — Alternate BT LE enumerator string
-///   Everything else is treated as USB.
+/// Connection type: determined by <see cref="IPnpBusDetector"/>.DetectBusType,
+///   which checks BT service GUIDs in the path and walks the PnP device tree via
+///   CfgMgr32. Falls back to <see cref="BusType.Unknown"/> if the tree walk fails.
 /// </remarks>
 public sealed class ControllerMatcher : IControllerMatcher
 {
     private readonly IVendorDatabase      _vendors;
     private readonly IDeviceFingerprinter _fingerprinter;
+    private readonly IPnpBusDetector      _busDetector;
 
-    public ControllerMatcher(IVendorDatabase vendors, IDeviceFingerprinter fingerprinter)
+    public ControllerMatcher(
+        IVendorDatabase      vendors,
+        IDeviceFingerprinter fingerprinter,
+        IPnpBusDetector      busDetector)
     {
         _vendors       = vendors;
         _fingerprinter = fingerprinter;
+        _busDetector   = busDetector;
     }
 
     public IReadOnlyList<MatchedController> Match(
@@ -42,8 +44,7 @@ public sealed class ControllerMatcher : IControllerMatcher
         for (int d = 0; d < hidDevices.Count; d++)
         {
             var h = hidDevices[d];
-            var ct = DetectHidConnectionType(h.DevicePath);
-            Debug.WriteLine($"  HID[{d}] VID={h.Vid} PID={h.Pid} name='{h.ProductName}' connType={ct}");
+            Debug.WriteLine($"  HID[{d}] VID={h.Vid} PID={h.Pid} name='{h.ProductName}'");
             Debug.WriteLine($"          path={h.DevicePath}");
         }
 
@@ -75,9 +76,8 @@ public sealed class ControllerMatcher : IControllerMatcher
                     hid    = h;
                     hidIdx = d;
                     fp     = fingerprinted.FirstOrDefault(f => f.Device.DevicePath == h.DevicePath);
-                    var ct = DetectHidConnectionType(h.DevicePath);
                     Debug.WriteLine($"  Slot{slot.SlotIndex}: MATCH hidIndex={d} VID={h.Vid} PID={h.Pid} " +
-                                    $"name='{h.ProductName}' connType={ct}");
+                                    $"name='{h.ProductName}'");
                     Debug.WriteLine($"    path={h.DevicePath}");
                     break;
                 }
@@ -103,10 +103,12 @@ public sealed class ControllerMatcher : IControllerMatcher
     private MatchedController BuildResult(
         XInputSlotInfo slot, HidDeviceInfo hid, FingerprintedDevice? fp)
     {
-        var connType = DetectHidConnectionType(hid.DevicePath);
+        var busType  = _busDetector.DetectBusType(hid.DevicePath);
+        var connType = ToHidConnectionType(busType);
         var brand    = _vendors.GetBrand(hid.Vid);
         Debug.WriteLine($"  BuildResult Slot{slot.SlotIndex}: brand='{brand ?? "(none)"}' " +
-                        $"connType={connType} battery={slot.BatteryPercent?.ToString() ?? "null"}");
+                        $"busType={busType} connType={connType} " +
+                        $"battery={slot.BatteryPercent?.ToString() ?? "null"}");
         return new MatchedController(
             slot.SlotIndex,
             IsConnected:            true,
@@ -117,7 +119,8 @@ public sealed class ControllerMatcher : IControllerMatcher
             fp?.KnownDeviceName,
             fp?.IsConfirmed          ?? false,
             brand,
-            connType);
+            connType,
+            busType);
     }
 
     private static MatchedController BuildDisconnectedResult(XInputSlotInfo slot) =>
@@ -130,7 +133,8 @@ public sealed class ControllerMatcher : IControllerMatcher
             KnownDeviceName:        null,
             IsKnownDeviceConfirmed: false,
             VendorBrand:            null,
-            HidConnectionType:      HidConnectionType.Unknown);
+            HidConnectionType:      HidConnectionType.Unknown,
+            BusType:                BusType.Unknown);
 
     private static MatchedController BuildNoHidResult(XInputSlotInfo slot) =>
         new(slot.SlotIndex,
@@ -142,34 +146,17 @@ public sealed class ControllerMatcher : IControllerMatcher
             KnownDeviceName:        null,
             IsKnownDeviceConfirmed: false,
             VendorBrand:            null,
-            HidConnectionType:      HidConnectionType.Unknown);
+            HidConnectionType:      HidConnectionType.Unknown,
+            BusType:                BusType.Unknown);
 
-    // ── Bluetooth detection ────────────────────────────────────────────────────
+    // ── Bus type → HID connection type mapping ─────────────────────────────────
 
-    private static HidConnectionType DetectHidConnectionType(string devicePath)
+    private static HidConnectionType ToHidConnectionType(BusType busType) => busType switch
     {
-        // Classic Bluetooth HID (most gamepads over BT)
-        if (devicePath.IndexOf("BTHENUM", StringComparison.OrdinalIgnoreCase) >= 0)
-            return HidConnectionType.Bluetooth;
-
-        // Bluetooth LE — Xbox Wireless Controller paired via BT on Win10/11
-        if (devicePath.IndexOf("BTHLEDevice", StringComparison.OrdinalIgnoreCase) >= 0)
-            return HidConnectionType.Bluetooth;
-
-        // HID-over-GATT service UUID — older Xbox One / most BT HID controllers
-        if (devicePath.IndexOf("{00001124-0000-1000-8000-00805f9b34fb}",
-                               StringComparison.OrdinalIgnoreCase) >= 0)
-            return HidConnectionType.Bluetooth;
-
-        // HID-over-GATT (HOGP) profile UUID — Xbox Series X/S and newer BT LE controllers
-        if (devicePath.IndexOf("{00001812-0000-1000-8000-00805f9b34fb}",
-                               StringComparison.OrdinalIgnoreCase) >= 0)
-            return HidConnectionType.Bluetooth;
-
-        // Alternate BT LE enumerator string seen on some Windows builds
-        if (devicePath.IndexOf("BLUETOOTHLEDEVICE", StringComparison.OrdinalIgnoreCase) >= 0)
-            return HidConnectionType.Bluetooth;
-
-        return HidConnectionType.Usb;
-    }
+        BusType.BluetoothLE         => HidConnectionType.Bluetooth,
+        BusType.BluetoothClassic    => HidConnectionType.Bluetooth,
+        BusType.XboxWirelessAdapter => HidConnectionType.Bluetooth,
+        BusType.Usb                 => HidConnectionType.Usb,
+        _                           => HidConnectionType.Unknown,
+    };
 }

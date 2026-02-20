@@ -129,19 +129,24 @@ public sealed class SlotViewModel : INotifyPropertyChanged
                      ?? (!string.IsNullOrEmpty(mc.VendorBrand) ? $"{mc.VendorBrand} Controller" : null)
                      ?? "Unknown Controller";
 
-        // Connection label.
-        // HID path detection covers most cases. XInput override: if the HID path doesn't
-        // contain a recognisable BT marker (detection returns Usb) but XInput's battery
-        // query confirms the device is wireless (Alkaline/NiMH battery type), trust XInput —
-        // the controller is definitely not USB-cabled. This covers Xbox Wireless Adapter and
-        // any BT path format that doesn't match our heuristics.
+        // Connection label — derived from BusType (PnP tree classification).
+        // Falls back to HidConnectionType heuristics when BusType is Unknown,
+        // and further falls back to XInput wireless detection as a last resort.
         bool xinputWireless = mc.XInputConnectionType == XInputConnectionType.Wireless;
-        ConnectionLabel = mc.HidConnectionType switch
+        ConnectionLabel = mc.BusType switch
         {
-            HidConnectionType.Bluetooth                             => "BT",
-            HidConnectionType.Usb when xinputWireless              => "BT",
-            HidConnectionType.Usb                                   => "USB",
-            _                           => mc.XInputConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless",
+            BusType.BluetoothLE         => "BT",
+            BusType.BluetoothClassic    => "BT",
+            BusType.XboxWirelessAdapter => "Wireless",
+            BusType.Usb                 => "USB",
+            // Unknown BusType — fall back to HidConnectionType + XInput heuristics.
+            _ => mc.HidConnectionType switch
+            {
+                HidConnectionType.Bluetooth                => "BT",
+                HidConnectionType.Usb when xinputWireless => "BT",
+                HidConnectionType.Usb                     => "USB",
+                _ => mc.XInputConnectionType == XInputConnectionType.Wired ? "USB" : "Wireless",
+            },
         };
 
         VendorBrand = mc.VendorBrand ?? string.Empty;

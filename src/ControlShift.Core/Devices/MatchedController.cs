@@ -18,5 +18,10 @@ public sealed record MatchedController(
     bool IsKnownDeviceConfirmed,
     /// <summary>Brand name from known-vendors.json, or null if the VID is not listed.</summary>
     string? VendorBrand,
-    HidConnectionType HidConnectionType
+    HidConnectionType HidConnectionType,
+    /// <summary>
+    /// Granular bus classification from the PnP device tree.
+    /// Distinguishes BLE, Classic BT, Xbox Wireless Adapter, and USB.
+    /// </summary>
+    BusType BusType
 );

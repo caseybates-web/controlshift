@@ -3,8 +3,8 @@ using HidSharp;
 namespace ControlShift.Core.Enumeration;
 
 /// <summary>
-/// Enumerates HID devices via HidSharp and returns a snapshot of each device's
-/// VID, PID, product name, and device path.
+/// Enumerates HID devices via HidSharp and supplements with BLE HID devices
+/// found via SetupAPI (HOGP profile GUID <c>{00001812-...}</c>).
 /// </summary>
 /// <remarks>
 /// DECISION: We enumerate all HID devices rather than pre-filtering by usage page
@@ -15,6 +15,11 @@ namespace ControlShift.Core.Enumeration;
 ///
 /// ProductName retrieval is best-effort: some devices (keyboards, mice, internal
 /// HID nodes) return nothing or throw. We swallow the exception and store null.
+///
+/// BLE HID supplement: HidSharp uses the standard HID interface GUID to enumerate
+/// devices. Some BLE controllers on certain Windows builds only appear under the
+/// HOGP service GUID {00001812-...}. BleHidEnumerator queries that GUID and any
+/// results not already present (by normalized instance ID) are appended.
 /// </remarks>
 public sealed class HidEnumerator : IHidEnumerator
 {
@@ -22,6 +27,7 @@ public sealed class HidEnumerator : IHidEnumerator
     {
         var results = new List<HidDeviceInfo>();
 
+        // ── HidSharp enumeration ──────────────────────────────────────────────
         foreach (HidDevice device in DeviceList.Local.GetHidDevices())
         {
             // For BTHENUM Bluetooth paths ("VID&" format), HidSharp may report the
@@ -41,6 +47,41 @@ public sealed class HidEnumerator : IHidEnumerator
             results.Add(new HidDeviceInfo(vid, pid, productName, device.DevicePath));
         }
 
+        // ── BLE HID supplement via SetupAPI ───────────────────────────────────
+        // Build a set of instance IDs already found by HidSharp for deduplication.
+        // Instance ID = path stripped of the trailing #{GUID} interface suffix,
+        // normalized to uppercase. Two paths that differ only in trailing GUID
+        // (e.g. HidSharp uses {4d1e55b2-...}, SetupAPI uses {00001812-...}) map
+        // to the same instance ID and represent the same physical device.
+        var seenInstanceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in results)
+            seenInstanceIds.Add(NormalizeToInstanceId(h.DevicePath));
+
+        foreach (var bleDevice in BleHidEnumerator.GetBleHidDevices())
+        {
+            if (seenInstanceIds.Add(NormalizeToInstanceId(bleDevice.DevicePath)))
+                results.Add(bleDevice);
+        }
+
         return results;
+    }
+
+    /// <summary>
+    /// Strips the trailing <c>#{GUID}</c> interface suffix from a device path
+    /// so paths for the same device but different interface GUIDs compare equal.
+    /// </summary>
+    private static string NormalizeToInstanceId(string devicePath)
+    {
+        // Strip \\?\
+        string s = devicePath.StartsWith(@"\\?\", StringComparison.Ordinal)
+            ? devicePath.Substring(4)
+            : devicePath;
+
+        // Remove trailing #{GUID}
+        int lastHash = s.LastIndexOf("#{", StringComparison.Ordinal);
+        if (lastHash >= 0)
+            s = s.Substring(0, lastHash);
+
+        return s.ToUpperInvariant();
     }
 }
