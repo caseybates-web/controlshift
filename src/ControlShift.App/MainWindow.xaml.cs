@@ -12,6 +12,8 @@ using ControlShift.App.ViewModels;
 using ControlShift.Core.Devices;
 using ControlShift.Core.Enumeration;
 using ControlShift.Core.Forwarding;
+using ControlShift.Core.Models;
+using ControlShift.Core.Profiles;
 
 namespace ControlShift.App;
 
@@ -46,7 +48,15 @@ public sealed partial class MainWindow : Window
     // ── Forwarding stack ─────────────────────────────────────────────────────
 
     private readonly IInputForwardingService _forwardingService;
+    private readonly IProfileStore   _profileStore;
     private readonly SlotOrderStore  _slotOrderStore = new();
+
+    // ── Process watcher + anticheat ─────────────────────────────────────────
+
+    private readonly IProcessWatcher  _processWatcher;
+    private readonly AntiCheatDatabase _antiCheatDb;
+    /// <summary>Profile that was auto-applied by process watcher (null = manual/none).</summary>
+    private Profile? _autoAppliedProfile;
 
     // ── Navigation state ──────────────────────────────────────────────────────
 
@@ -89,20 +99,40 @@ public sealed partial class MainWindow : Window
             System.IO.Path.GetTempPath(),
             $"ControlShift-nav-{DateTime.Now:yyyyMMdd-HHmmss}.log");
 
+    private static readonly object _logLock = new();
+
     private static void NavLog(string msg)
     {
         var line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
         Debug.WriteLine(line);
-        try { System.IO.File.AppendAllText(NavLogPath, line + System.Environment.NewLine); }
-        catch { /* log writes must never throw */ }
+        lock (_logLock)
+        {
+            try { System.IO.File.AppendAllText(NavLogPath, line + System.Environment.NewLine); }
+            catch { /* log writes must never throw */ }
+        }
     }
 
     // ── Construction ──────────────────────────────────────────────────────────
 
-    public MainWindow(IInputForwardingService forwardingService)
+    public MainWindow(IInputForwardingService forwardingService, IProfileStore profileStore)
     {
         _forwardingService = forwardingService;
         _forwardingService.ForwardingError += OnForwardingError;
+        _profileStore = profileStore;
+
+        // Initialize anticheat database (best-effort — falls back to empty).
+        string antiCheatPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "anticheat-games.json");
+        try   { _antiCheatDb = AntiCheatDatabase.FromFile(antiCheatPath); }
+        catch (Exception ex)
+        {
+            NavLog($"WARNING: Failed to load anticheat database — anticheat games will NOT be auto-detected: {ex.Message}");
+            _antiCheatDb = new AntiCheatDatabase(Array.Empty<AntiCheatEntry>());
+        }
+
+        // Initialize WMI process watcher for auto-apply/auto-revert.
+        _processWatcher = new WmiProcessWatcher();
+        _processWatcher.ProcessStarted += OnProcessStarted;
+        _processWatcher.ProcessStopped += OnProcessStopped;
 
         InitializeComponent();
 
@@ -168,6 +198,9 @@ public sealed partial class MainWindow : Window
 
         // Initial scan on window open.
         _ = RefreshAsync();
+
+        // Start watching for game processes that have saved profiles.
+        InitializeProcessWatcher();
     }
 
     // ── Navigation: deferred setup ────────────────────────────────────────────
@@ -182,10 +215,14 @@ public sealed partial class MainWindow : Window
         NavLog("OnContentGridLoaded — wiring focus events on footer buttons");
 
         // Wire focus tracking on footer buttons (cards are wired dynamically in EnsureCards).
-        RevertButton.GotFocus  += (_, _) => OnElementGotFocus(RevertButton);
-        RevertButton.LostFocus += (_, _) => OnElementLostFocus(RevertButton);
-        ExitButton.GotFocus    += (_, _) => OnElementGotFocus(ExitButton);
-        ExitButton.LostFocus   += (_, _) => OnElementLostFocus(ExitButton);
+        RevertButton.GotFocus       += (_, _) => OnElementGotFocus(RevertButton);
+        RevertButton.LostFocus      += (_, _) => OnElementLostFocus(RevertButton);
+        SaveProfileButton.GotFocus  += (_, _) => OnElementGotFocus(SaveProfileButton);
+        SaveProfileButton.LostFocus += (_, _) => OnElementLostFocus(SaveProfileButton);
+        ProfilesButton.GotFocus     += (_, _) => OnElementGotFocus(ProfilesButton);
+        ProfilesButton.LostFocus    += (_, _) => OnElementLostFocus(ProfilesButton);
+        ExitButton.GotFocus         += (_, _) => OnElementGotFocus(ExitButton);
+        ExitButton.LostFocus        += (_, _) => OnElementLostFocus(ExitButton);
 
         // Per-device forwarding is started on-demand via ApplyForwardingAsync()
         // when the user confirms a reorder. No upfront initialization needed.
@@ -243,9 +280,7 @@ public sealed partial class MainWindow : Window
             SlotPanel.Children.Add(card);
         }
 
-        // Sync TabIndex
-        for (int i = 0; i < _cards.Count; i++)
-            _cards[i].TabIndex = i;
+        SyncTabIndices();
     }
 
     /// <summary>
@@ -257,6 +292,64 @@ public sealed partial class MainWindow : Window
     {
         _cards.Clear();
         _cards.AddRange(SlotPanel.Children.OfType<SlotCard>());
+    }
+
+    /// <summary>Ensures each card's TabIndex matches its position in _cards.</summary>
+    private void SyncTabIndices()
+    {
+        for (int i = 0; i < _cards.Count; i++)
+            _cards[i].TabIndex = i;
+    }
+
+    /// <summary>
+    /// Replaces SlotPanel.Children and _cards with the given card list,
+    /// then syncs TabIndex. Used by LoadProfile, ApplySavedOrder, CancelReorder.
+    /// </summary>
+    private void ReplaceCardOrder(IReadOnlyList<SlotCard> newOrder)
+    {
+        SlotPanel.Children.Clear();
+        _cards.Clear();
+        _cards.AddRange(newOrder);
+        foreach (var card in _cards)
+            SlotPanel.Children.Add(card);
+        SyncTabIndices();
+    }
+
+    /// <summary>
+    /// Resets the A-button hold state — called on confirm, cancel, and focus changes.
+    /// </summary>
+    private void ResetHoldState()
+    {
+        _holdTimer.Stop();
+        _holdTickCount       = 0;
+        _aHoldStart          = null;
+        _aHoldEnteredReorder = false;
+    }
+
+    /// <summary>
+    /// Post-reorder focus safety: corrects focus drift immediately and via deferred dispatch.
+    /// ConfirmReorder and CancelReorder both need this identical pattern.
+    /// </summary>
+    private void EnsureFocusConsistency(SlotCard expectedCard, string callerName)
+    {
+        // Sync drift check
+        if (!ReferenceEquals(_focusedElement, expectedCard))
+        {
+            NavLog($"[{callerName}] sync drift — correcting");
+            _focusedElement = expectedCard;
+            UpdateCardStates();
+        }
+
+        // Deferred guard
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
+        {
+            if (_reorderingIndex < 0 && !ReferenceEquals(_focusedElement, expectedCard))
+            {
+                NavLog($"[{callerName} deferred guard] — correcting");
+                _focusedElement = expectedCard;
+                UpdateCardStates();
+            }
+        });
     }
 
     // ── Positional navigation helpers ──────────────────────────────────────
@@ -273,6 +366,8 @@ public sealed partial class MainWindow : Window
 
         if (RevertButton.Visibility == Visibility.Visible)
             elements.Add(RevertButton);
+        elements.Add(SaveProfileButton);
+        elements.Add(ProfilesButton);
         elements.Add(ExitButton);
 
         return elements;
@@ -297,6 +392,7 @@ public sealed partial class MainWindow : Window
         _navTimer.Stop();
         _watchdogTimer.Stop();
         _holdTimer.Stop();
+        _processWatcher.Dispose();
         _forwardingService.Dispose();
     }
 
@@ -359,6 +455,376 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    // ── Profiles ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// P/Invoke helpers for detecting the foreground application's EXE name.
+    /// Used by "Save Profile" to auto-populate the game exe field.
+    /// </summary>
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    private static string? GetForegroundExeName()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return null;
+            GetWindowThreadProcessId(hwnd, out uint pid);
+            if (pid == 0) return null;
+            var proc = Process.GetProcessById((int)pid);
+            return Path.GetFileName(proc.MainModule?.FileName);
+        }
+        catch { return null; }
+    }
+
+    private async void SaveProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Auto-detect foreground EXE (likely the game the user wants to profile).
+            // Note: ControlShift itself will often be the foreground app, so this is
+            // a best-effort hint that the user can override.
+            string? detectedExe = GetForegroundExeName();
+            string defaultName = detectedExe is not null
+                ? Path.GetFileNameWithoutExtension(detectedExe)
+                : "New Profile";
+
+            // Build a simple dialog for profile name and game exe.
+            var nameBox = new TextBox
+            {
+                Text = defaultName,
+                PlaceholderText = "Profile name",
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            var exeBox = new TextBox
+            {
+                Text = detectedExe ?? string.Empty,
+                PlaceholderText = "Game executable (e.g. game.exe) — optional",
+            };
+
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock { Text = "Profile Name:", Margin = new Thickness(0, 0, 0, 4) });
+            panel.Children.Add(nameBox);
+            panel.Children.Add(new TextBlock { Text = "Game Executable:", Margin = new Thickness(0, 8, 0, 4) });
+            panel.Children.Add(exeBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "Save Profile",
+                Content = panel,
+                PrimaryButtonText = "Save",
+                CloseButtonText = "Cancel",
+                XamlRoot = Content.XamlRoot,
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary) return;
+
+            string profileName = nameBox.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(profileName)) return;
+
+            string? gameExe = string.IsNullOrWhiteSpace(exeBox.Text) ? null : exeBox.Text.Trim();
+
+            // Build profile from current card order using VID:PID.
+            var slotAssignments = new string?[4];
+            for (int i = 0; i < _cards.Count && i < 4; i++)
+            {
+                var vidPid = _cards[i].VidPid;
+                slotAssignments[i] = string.IsNullOrEmpty(vidPid) ? null : vidPid;
+            }
+
+            // Check anticheat database and auto-flag if needed.
+            bool isAntiCheat = gameExe is not null && _antiCheatDb.IsAntiCheatGame(gameExe);
+            if (isAntiCheat)
+            {
+                var warnDialog = new ContentDialog
+                {
+                    Title = "Anticheat Game Detected",
+                    Content = $"{gameExe} uses kernel-level anticheat.\n\n" +
+                              "ControlShift will automatically STOP forwarding when this game " +
+                              "launches to avoid detection. The profile will still be saved for " +
+                              "manual use in non-anticheat scenarios.",
+                    PrimaryButtonText = "OK",
+                    CloseButtonText = "Cancel",
+                    XamlRoot = Content.XamlRoot,
+                };
+
+                var warnResult = await warnDialog.ShowAsync();
+                if (warnResult != ContentDialogResult.Primary) return;
+            }
+
+            var profile = new Profile
+            {
+                ProfileName = profileName,
+                GameExe = gameExe,
+                SlotAssignments = slotAssignments,
+                AntiCheatGame = isAntiCheat,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+
+            _profileStore.Save(profile);
+            NavLog($"[Profile] Saved: {profileName} (exe={gameExe ?? "none"}, anticheat={isAntiCheat})");
+
+            // Refresh process watcher to include the new profile's exe.
+            InitializeProcessWatcher();
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[Profile] Save failed: {ex.Message}");
+        }
+    }
+
+    private async void ProfilesButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var profiles = _profileStore.LoadAll();
+
+            if (profiles.Count == 0)
+            {
+                var emptyDialog = new ContentDialog
+                {
+                    Title = "Profiles",
+                    Content = "No saved profiles. Reorder your controllers, then tap \"Save Profile\" to create one.",
+                    CloseButtonText = "OK",
+                    XamlRoot = Content.XamlRoot,
+                };
+                await emptyDialog.ShowAsync();
+                return;
+            }
+
+            // Build a simple list of profile names for selection.
+            var listView = new ListView
+            {
+                SelectionMode = ListViewSelectionMode.Single,
+                MaxHeight = 300,
+            };
+            foreach (var p in profiles)
+            {
+                string label = p.ProfileName;
+                if (p.GameExe is not null)
+                    label += $" ({p.GameExe})";
+                listView.Items.Add(label);
+            }
+            if (listView.Items.Count > 0)
+                listView.SelectedIndex = 0;
+
+            var dialog = new ContentDialog
+            {
+                Title = "Load Profile",
+                Content = listView,
+                PrimaryButtonText = "Load",
+                SecondaryButtonText = "Delete",
+                CloseButtonText = "Cancel",
+                XamlRoot = Content.XamlRoot,
+            };
+
+            var result = await dialog.ShowAsync();
+            int selectedIdx = listView.SelectedIndex;
+            if (selectedIdx < 0 || selectedIdx >= profiles.Count) return;
+
+            var selected = profiles[selectedIdx];
+
+            if (result == ContentDialogResult.Primary)
+            {
+                await LoadProfileAsync(selected);
+            }
+            else if (result == ContentDialogResult.Secondary)
+            {
+                _profileStore.Delete(selected.ProfileName);
+                NavLog($"[Profile] Deleted: {selected.ProfileName}");
+                InitializeProcessWatcher();
+            }
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[Profile] Load/delete failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Resolves a profile's VID:PID assignments to current device paths,
+    /// reorders the cards to match, and starts forwarding.
+    /// </summary>
+    private async Task LoadProfileAsync(Profile profile)
+    {
+        try
+        {
+            // Build connected-controller tuples from current cards.
+            var connected = _cards
+                .Select(c => (VidPid: c.VidPid, DevicePath: c.DevicePath))
+                .Where(t => !string.IsNullOrEmpty(t.VidPid))
+                .ToList();
+
+            var assignments = ProfileResolver.Resolve(profile, connected);
+
+            // Reorder _cards to match profile's slot order.
+            // For each assignment that resolved a device path, find the matching card.
+            _suppressFocusEvents = true;
+            try
+            {
+                var newOrder = new List<SlotCard>();
+                var remaining = new List<SlotCard>(_cards);
+
+                foreach (var assignment in assignments)
+                {
+                    if (assignment.SourceDevicePath is null) continue;
+
+                    var match = remaining.FirstOrDefault(c =>
+                        string.Equals(c.DevicePath, assignment.SourceDevicePath,
+                            StringComparison.OrdinalIgnoreCase));
+
+                    if (match is not null)
+                    {
+                        newOrder.Add(match);
+                        remaining.Remove(match);
+                    }
+                }
+
+                // Append any remaining cards that weren't in the profile.
+                newOrder.AddRange(remaining);
+
+                ReplaceCardOrder(newOrder);
+            }
+            finally
+            {
+                _suppressFocusEvents = false;
+            }
+
+            // Start forwarding with the new order.
+            await ApplyForwardingAsync();
+            SaveCurrentOrder();
+            NavLog($"[Profile] Loaded: {profile.ProfileName}");
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[Profile] Load failed: {ex.Message}");
+        }
+    }
+
+    // ── Process watcher ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Collects all game exe names from saved profiles and starts the WMI
+    /// process watcher. Called on startup and after profile save/delete.
+    /// </summary>
+    private void InitializeProcessWatcher()
+    {
+        try
+        {
+            var profiles = _profileStore.LoadAll();
+            var exeNames = profiles
+                .Where(p => p.GameExe is not null)
+                .Select(p => p.GameExe!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (exeNames.Count > 0)
+            {
+                _processWatcher.StartWatching(exeNames);
+                NavLog($"[ProcessWatcher] Watching {exeNames.Count} exe(s): [{string.Join(", ", exeNames)}]");
+            }
+            else
+            {
+                _processWatcher.StopWatching();
+                NavLog("[ProcessWatcher] No profiles with game exe — stopped watching");
+            }
+        }
+        catch (Exception ex)
+        {
+            NavLog($"[ProcessWatcher] Init failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Fires on a WMI worker thread when a watched process starts.
+    /// Marshals to the UI thread via DispatcherQueue.
+    /// </summary>
+    private void OnProcessStarted(object? sender, ProcessEventArgs e)
+    {
+        NavLog($"[ProcessWatcher] Process started: {e.ProcessName} (PID {e.ProcessId})");
+
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                var profile = _profileStore.FindByGameExe(e.ProcessName);
+                if (profile is null)
+                {
+                    NavLog($"[ProcessWatcher] No profile for {e.ProcessName}");
+                    return;
+                }
+
+                // ANTICHEAT SAFETY: If the game uses anticheat, STOP forwarding
+                // immediately rather than starting it. Win32_ProcessStartTrace fires
+                // at CreateProcess() time, giving ~2-5s before anticheat drivers scan.
+                if (profile.AntiCheatGame || _antiCheatDb.IsAntiCheatGame(e.ProcessName))
+                {
+                    NavLog($"[ProcessWatcher] Anticheat game detected — stopping forwarding for {e.ProcessName}");
+                    if (_forwardingService.IsForwarding)
+                    {
+                        await _forwardingService.StopForwardingAsync();
+                        _autoAppliedProfile = null;
+                        if (RevertButton is not null)
+                            RevertButton.Visibility = Visibility.Collapsed;
+                        NavLog("[ProcessWatcher] Forwarding stopped (anticheat safety)");
+                    }
+                    return;
+                }
+
+                // Non-anticheat game: auto-apply the profile.
+                NavLog($"[ProcessWatcher] Auto-applying profile '{profile.ProfileName}' for {e.ProcessName}");
+                _autoAppliedProfile = profile;
+                await LoadProfileAsync(profile);
+            }
+            catch (Exception ex)
+            {
+                NavLog($"[ProcessWatcher] OnProcessStarted error: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Fires on a WMI worker thread when a watched process exits.
+    /// If an auto-applied profile is active, stops forwarding.
+    /// </summary>
+    private void OnProcessStopped(object? sender, ProcessEventArgs e)
+    {
+        NavLog($"[ProcessWatcher] Process stopped: {e.ProcessName} (PID {e.ProcessId})");
+
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                // Only auto-revert if the exiting process matches the auto-applied profile.
+                if (_autoAppliedProfile?.GameExe is null) return;
+
+                if (!string.Equals(_autoAppliedProfile.GameExe, e.ProcessName,
+                        StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                NavLog($"[ProcessWatcher] Auto-applied game exited — stopping forwarding");
+                _autoAppliedProfile = null;
+
+                if (_forwardingService.IsForwarding)
+                {
+                    await _forwardingService.StopForwardingAsync();
+                    if (RevertButton is not null)
+                        RevertButton.Visibility = Visibility.Collapsed;
+                    _ = RefreshAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                NavLog($"[ProcessWatcher] OnProcessStopped error: {ex.Message}");
+            }
+        });
+    }
+
     // ── Order persistence ────────────────────────────────────────────────────
 
     /// <summary>
@@ -415,14 +881,7 @@ public sealed partial class MainWindow : Window
         _suppressFocusEvents = true;
         try
         {
-            SlotPanel.Children.Clear();
-            _cards.Clear();
-            _cards.AddRange(sorted);
-            foreach (var card in _cards)
-                SlotPanel.Children.Add(card);
-
-            for (int i = 0; i < _cards.Count; i++)
-                _cards[i].TabIndex = i;
+            ReplaceCardOrder(sorted);
         }
         finally
         {
@@ -569,6 +1028,8 @@ public sealed partial class MainWindow : Window
     private void ActivateButton(Button btn)
     {
         if (btn == RevertButton) RevertButton_Click(btn, new RoutedEventArgs());
+        else if (btn == SaveProfileButton) SaveProfileButton_Click(btn, new RoutedEventArgs());
+        else if (btn == ProfilesButton) ProfilesButton_Click(btn, new RoutedEventArgs());
         else if (btn == ExitButton) ExitButton_Click(btn, new RoutedEventArgs());
     }
 
@@ -767,12 +1228,9 @@ public sealed partial class MainWindow : Window
         _suppressFocusEvents = true;
         try
         {
-            _holdTimer.Stop();
-            _holdTickCount       = 0;
-            _aHoldStart          = null;
-            _aHoldEnteredReorder = false;
-            _focusedElement      = confirmCard;
-            _reorderingIndex     = -1;
+            ResetHoldState();
+            _focusedElement  = confirmCard;
+            _reorderingIndex = -1;
 
             UpdateCardStates();
             confirmCard.Focus(FocusState.Programmatic);
@@ -782,25 +1240,7 @@ public sealed partial class MainWindow : Window
             _suppressFocusEvents = false;
         }
 
-        // Sync drift check
-        if (!ReferenceEquals(_focusedElement, confirmCard))
-        {
-            NavLog("[ConfirmReorder] sync drift — correcting");
-            _focusedElement = confirmCard;
-            UpdateCardStates();
-        }
-
-        // Deferred guard
-        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
-        {
-            if (_reorderingIndex < 0 && !ReferenceEquals(_focusedElement, confirmCard))
-            {
-                NavLog("[ConfirmReorder deferred guard] — correcting");
-                _focusedElement = confirmCard;
-                UpdateCardStates();
-            }
-        });
-
+        EnsureFocusConsistency(confirmCard, "ConfirmReorder");
         NavLog($"[ConfirmReorder] done — reorderIdx={_reorderingIndex}");
 
         _ = ApplyForwardingAsync();
@@ -817,22 +1257,12 @@ public sealed partial class MainWindow : Window
         _suppressFocusEvents = true;
         try
         {
-            SlotPanel.Children.Clear();
-            _cards.Clear();
-            _cards.AddRange(_savedOrder);
-            foreach (var card in _cards)
-                SlotPanel.Children.Add(card);
-
+            ReplaceCardOrder(_savedOrder);
             RebuildCardsFromPanel();
-            for (int i = 0; i < _cards.Count; i++)
-                _cards[i].TabIndex = i;
 
-            _holdTimer.Stop();
-            _holdTickCount       = 0;
-            _aHoldStart          = null;
-            _aHoldEnteredReorder = false;
-            _focusedElement      = focusCard;
-            _reorderingIndex     = -1;
+            ResetHoldState();
+            _focusedElement  = focusCard;
+            _reorderingIndex = -1;
 
             UpdateCardStates();
             focusCard.Focus(FocusState.Programmatic);
@@ -842,25 +1272,7 @@ public sealed partial class MainWindow : Window
             _suppressFocusEvents = false;
         }
 
-        // Sync drift check
-        if (!ReferenceEquals(_focusedElement, focusCard))
-        {
-            NavLog("[CancelReorder] sync drift — correcting");
-            _focusedElement = focusCard;
-            UpdateCardStates();
-        }
-
-        // Deferred guard
-        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
-        {
-            if (_reorderingIndex < 0 && !ReferenceEquals(_focusedElement, focusCard))
-            {
-                NavLog("[CancelReorder deferred guard] — correcting");
-                _focusedElement = focusCard;
-                UpdateCardStates();
-            }
-        });
-
+        EnsureFocusConsistency(focusCard, "CancelReorder");
         NavLog($"[CancelReorder] done — reorderIdx={_reorderingIndex}");
     }
 
@@ -881,9 +1293,7 @@ public sealed partial class MainWindow : Window
             SlotPanel.Children.Insert(newIdx, movingCard);
 
             RebuildCardsFromPanel();
-
-            for (int i = 0; i < _cards.Count; i++)
-                _cards[i].TabIndex = i;
+            SyncTabIndices();
 
             _reorderingIndex = newIdx;
             _focusedElement  = movingCard;
@@ -921,6 +1331,8 @@ public sealed partial class MainWindow : Window
     private void UpdateButtonFocusVisuals()
     {
         ApplyButtonFocusVisual(RevertButton, ReferenceEquals(_focusedElement, RevertButton));
+        ApplyButtonFocusVisual(SaveProfileButton, ReferenceEquals(_focusedElement, SaveProfileButton));
+        ApplyButtonFocusVisual(ProfilesButton, ReferenceEquals(_focusedElement, ProfilesButton));
         ApplyButtonFocusVisual(ExitButton, ReferenceEquals(_focusedElement, ExitButton));
     }
 

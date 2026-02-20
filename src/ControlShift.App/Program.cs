@@ -27,6 +27,14 @@ class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // --cleanup: called by the installer on uninstall to remove HidHide rules.
+        // Runs headless (no WinUI) and exits immediately.
+        if (args.Any(a => a.Equals("--cleanup", StringComparison.OrdinalIgnoreCase)))
+        {
+            try { new HidHideService().ClearAllRules(); } catch { }
+            return;
+        }
+
         try
         {
             var svc = new HidHideService();

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  MSI package for the ControlShift application.
+  Installs to ProgramFiles\ControlShift\.
+  Custom action on uninstall runs ControlShift.App.exe --cleanup to clear HidHide rules.
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package Name="ControlShift"
+           Version="0.3.0.0"
+           Manufacturer="ControlShift"
+           UpgradeCode="A1B2C3D4-E5F6-7890-1234-567890ABCDEF"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ControlShift is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Install directory -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="ControlShift" />
+    </StandardDirectory>
+
+    <!-- Application files (harvested by AppFiles.wxs) -->
+    <Feature Id="ProductFeature" Title="ControlShift" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="CleanupAction" />
+    </Feature>
+
+    <!-- Registry key to serve as KeyPath for the cleanup component -->
+    <Component Id="CleanupAction" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKLM"
+                     Key="SOFTWARE\ControlShift"
+                     Name="Installed"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <!--
+      Custom action: run ControlShift.App.exe --cleanup on uninstall to clear HidHide rules.
+      Uses Execute="immediate" so INSTALLFOLDER resolves correctly.
+      Scheduled Before="RemoveFiles" so the exe still exists on disk.
+      Return="ignore" so uninstall proceeds even if cleanup fails.
+    -->
+    <CustomAction Id="RunCleanup"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="ControlShift.App.exe --cleanup"
+                  Execute="immediate"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunCleanup" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+  </Package>
+
+</Wix>

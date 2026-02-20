@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Install WiX 4 CLI
+      run: dotnet tool install --global wix
+
+    - name: Restore & Publish App (self-contained x64)
+      run: >
+        dotnet publish src/ControlShift.App/ControlShift.App.csproj
+        -c Release
+        -r win-x64
+        --self-contained
+        -o publish/
+
+    - name: Download driver prerequisites
+      run: powershell -ExecutionPolicy Bypass -File src/ControlShift.Installer/download-prereqs.ps1
+      shell: pwsh
+
+    # Build MSI first (needs PublishDir for file harvest).
+    - name: Build MSI Package
+      run: >
+        dotnet build src/ControlShift.Package/ControlShift.Package.wixproj
+        -c Release
+        -p:PublishDir=${{ github.workspace }}/publish/
+
+    # Build Burn Bundle (chains ViGEmBus + HidHide + MSI).
+    # ProjectReference to Package project provides $(var.ControlShift.Package.TargetPath).
+    - name: Build Burn Bundle
+      run: >
+        dotnet build src/ControlShift.Installer/ControlShift.Installer.wixproj
+        -c Release
+      continue-on-error: false
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          src/ControlShift.Installer/bin/Release/*.exe
+        generate_release_notes: true

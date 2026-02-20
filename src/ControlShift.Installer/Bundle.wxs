@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  Burn bootstrapper: chains ViGEmBus → HidHide → ControlShift MSI.
+  Permanent=yes on drivers = NOT removed on uninstall (per CLAUDE.md).
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+  <Bundle Name="ControlShift"
+          Version="0.3.0.0"
+          Manufacturer="ControlShift"
+          UpgradeCode="F1A2B3C4-D5E6-7890-ABCD-EF1234567890">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+        LicenseUrl=""
+        Theme="hyperlinkLicense" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <!-- ViGEmBus driver installer — Permanent (stays after uninstall) -->
+      <ExePackage
+        Id="ViGEmBusInstaller"
+        Name="ViGEmBus_1.22.0_x64_x86_arm64.exe"
+        SourceFile="prereqs\ViGEmBus_Setup.exe"
+        InstallArguments="/quiet /norestart"
+        UninstallArguments=""
+        Permanent="yes"
+        DetectCondition="false"
+        Vital="yes" />
+
+      <!-- HidHide driver installer — Permanent (stays after uninstall) -->
+      <ExePackage
+        Id="HidHideInstaller"
+        Name="HidHide_1.4.192_x64.exe"
+        SourceFile="prereqs\HidHide_Setup.exe"
+        InstallArguments="/quiet /norestart"
+        UninstallArguments=""
+        Permanent="yes"
+        DetectCondition="false"
+        Vital="yes" />
+
+      <!-- ControlShift MSI (built by the ControlShift.Package project via ProjectReference) -->
+      <MsiPackage
+        Id="ControlShiftMsi"
+        SourceFile="$(var.ControlShift.Package.TargetPath)"
+        Vital="yes" />
+    </Chain>
+
+  </Bundle>
+
+</Wix>

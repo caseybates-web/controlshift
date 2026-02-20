@@ -13,16 +13,28 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header: title left, version right -->
+        <!-- Header: title left, profiles button + version right -->
         <Grid Grid.Row="0" Padding="20,20,20,14">
             <TextBlock Text="ControlShift"
                        FontFamily="Segoe UI" FontSize="18" FontWeight="Bold"
                        Foreground="{StaticResource XbTextBrush}"
                        HorizontalAlignment="Left" VerticalAlignment="Center" />
-            <TextBlock Text="v0.2"
-                       FontFamily="Segoe UI" FontSize="11"
-                       Foreground="{StaticResource XbTextMutedBrush}"
-                       HorizontalAlignment="Right" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="12">
+                <Button x:Name="ProfilesButton"
+                        Content="Profiles"
+                        Padding="10,4"
+                        FontSize="11"
+                        Background="#2D2D2D"
+                        Foreground="{StaticResource XbTextMutedBrush}"
+                        BorderThickness="1"
+                        BorderBrush="#404040"
+                        CornerRadius="2"
+                        Click="ProfilesButton_Click" />
+                <TextBlock Text="v0.3"
+                           FontFamily="Segoe UI" FontSize="11"
+                           Foreground="{StaticResource XbTextMutedBrush}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
         </Grid>
 
         <!-- Scrollable card list -->
@@ -48,7 +60,7 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Footer: Revert All + Exit -->
+        <!-- Footer: Revert All + Save Profile + Exit -->
         <StackPanel x:Name="FooterPanel" Grid.Row="2" HorizontalAlignment="Center" Spacing="4" Padding="0,8,0,0">
             <Button x:Name="RevertButton"
                     Content="Revert All"
@@ -59,6 +71,14 @@
                     CornerRadius="2"
                     Visibility="Collapsed"
                     Click="RevertButton_Click" />
+            <Button x:Name="SaveProfileButton"
+                    Content="Save Profile"
+                    HorizontalAlignment="Center"
+                    Padding="16,8"
+                    Background="#107C10"
+                    Foreground="White"
+                    CornerRadius="2"
+                    Click="SaveProfileButton_Click" />
             <Button x:Name="ExitButton"
                     Content="Exit ControlShift"
                     HorizontalAlignment="Center"

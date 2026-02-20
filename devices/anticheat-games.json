@@ -1,0 +1,24 @@
+{
+  "games": [
+    { "exe": "eldenring.exe", "anticheat": "EAC", "name": "Elden Ring" },
+    { "exe": "start_protected_game.exe", "anticheat": "EAC", "name": "EAC Protected Game Launcher (generic)" },
+    { "exe": "FortniteClient-Win64-Shipping.exe", "anticheat": "EAC", "name": "Fortnite" },
+    { "exe": "r5apex.exe", "anticheat": "EAC", "name": "Apex Legends" },
+    { "exe": "FallGuys_client_game.exe", "anticheat": "EAC", "name": "Fall Guys" },
+    { "exe": "RocketLeague.exe", "anticheat": "EAC", "name": "Rocket League" },
+    { "exe": "DBDWin64Shipping.exe", "anticheat": "EAC", "name": "Dead by Daylight" },
+    { "exe": "Insurgency.exe", "anticheat": "EAC", "name": "Insurgency: Sandstorm" },
+    { "exe": "destiny2.exe", "anticheat": "BattlEye", "name": "Destiny 2" },
+    { "exe": "arma3_x64.exe", "anticheat": "BattlEye", "name": "Arma 3" },
+    { "exe": "TslGame.exe", "anticheat": "BattlEye", "name": "PUBG: Battlegrounds" },
+    { "exe": "RainbowSix.exe", "anticheat": "BattlEye", "name": "Rainbow Six Siege" },
+    { "exe": "DayZ_x64.exe", "anticheat": "BattlEye", "name": "DayZ" },
+    { "exe": "EscapeFromTarkov.exe", "anticheat": "BattlEye", "name": "Escape from Tarkov" },
+    { "exe": "ForHonor.exe", "anticheat": "BattlEye", "name": "For Honor" },
+    { "exe": "VALORANT-Win64-Shipping.exe", "anticheat": "Vanguard", "name": "Valorant" },
+    { "exe": "LeagueClient.exe", "anticheat": "Vanguard", "name": "League of Legends" },
+    { "exe": "GenshinImpact.exe", "anticheat": "mhyprot", "name": "Genshin Impact" },
+    { "exe": "ZenlessZoneZero.exe", "anticheat": "mhyprot", "name": "Zenless Zone Zero" },
+    { "exe": "HonkaiStarRail.exe", "anticheat": "mhyprot", "name": "Honkai: Star Rail" }
+  ]
+}
