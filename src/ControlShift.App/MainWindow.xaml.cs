@@ -652,6 +652,11 @@ public sealed partial class MainWindow : Window
 
             for (uint i = 0; i < 4; i++)
             {
+                // Skip virtual ViGEm slots — reading them would double-count
+                // physical input that's being forwarded, causing phantom button presses.
+                if (_forwardingService.VirtualSlotIndices.Contains((int)i))
+                    continue;
+
                 bool stateOk = XInput.GetState(i, out State state);
                 if (stateOk)
                 {
