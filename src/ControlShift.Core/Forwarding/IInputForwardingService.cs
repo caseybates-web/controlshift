@@ -11,8 +11,13 @@ public interface IInputForwardingService : IDisposable
     /// <summary>Begin forwarding for all non-empty slot assignments.</summary>
     Task StartForwardingAsync(IReadOnlyList<SlotAssignment> assignments);
 
-    /// <summary>Stop all forwarding, destroy virtual controllers, unhide all devices.</summary>
+    /// <summary>Stop HID forwarding and clear HidHide rules.
+    /// ViGEm virtual controllers remain connected for reuse.</summary>
     Task StopForwardingAsync();
+
+    /// <summary>Full revert: stop forwarding, disconnect ViGEm controllers, unhide all devices.
+    /// Called by "Revert All" to restore physical controllers.</summary>
+    Task RevertAllAsync();
 
     /// <summary>Whether any forwarding is currently active.</summary>
     bool IsForwarding { get; }

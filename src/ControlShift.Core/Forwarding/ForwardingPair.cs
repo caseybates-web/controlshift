@@ -49,12 +49,13 @@ internal sealed class ForwardingPair : IDisposable
         _thread.Start();
     }
 
-    /// <summary>Stops the forwarding thread and cleans up resources.</summary>
+    /// <summary>Stops the forwarding thread and closes the HID stream.
+    /// Does NOT disconnect the ViGEm controller — that lifecycle is owned by
+    /// InputForwardingService's persistent pool.</summary>
     public void Stop()
     {
         _cts.Cancel();
         _thread?.Join(millisecondsTimeout: 500);
-        _vigem.Disconnect();
 
         try { _hidStream.Close(); }
         catch { /* best effort */ }
@@ -107,6 +108,7 @@ internal sealed class ForwardingPair : IDisposable
         _disposed = true;
         Stop();
         _cts.Dispose();
-        _vigem.Dispose();
+        // ViGEm controller is NOT disposed here — it's owned by the persistent pool
+        // in InputForwardingService and reused across stop/start cycles.
     }
 }

@@ -11,8 +11,9 @@ namespace ControlShift.Core.Forwarding;
 /// HidHide device suppression, and HID→ViGEm forwarding pairs.
 /// </summary>
 /// <remarks>
-/// DECISION: Uses a <see cref="SemaphoreSlim"/> to prevent concurrent Start/Stop calls.
-/// All forwarding threads are dedicated (not thread-pool) with AboveNormal priority.
+/// ViGEm controllers are connected ONCE and persisted across stop/start cycles.
+/// Only <see cref="RevertAllAsync"/> and <see cref="Dispose"/> disconnect them.
+/// This prevents WM_DEVICECHANGE chime loops caused by ViGEm connect/disconnect.
 /// </remarks>
 public sealed class InputForwardingService : IInputForwardingService
 {
@@ -22,7 +23,9 @@ public sealed class InputForwardingService : IInputForwardingService
     private readonly List<SlotAssignment> _activeAssignments = new();
     private readonly HashSet<int> _virtualSlotIndices = new();
 
+    // Persistent ViGEm pool — created once, reused across stop/start cycles.
     private ViGEmClient? _vigemClient;
+    private readonly List<IViGEmController> _vigemPool = new();
     private int _errorCount;
 
     public bool IsForwarding => _pairs.Count > 0;
@@ -45,10 +48,35 @@ public sealed class InputForwardingService : IInputForwardingService
                 throw new InvalidOperationException("Forwarding is already active. Call StopForwardingAsync first.");
 
             _errorCount = 0;
-            _virtualSlotIndices.Clear();
 
-            // Create the ViGEmBus client (shared for all virtual controllers).
-            _vigemClient = new ViGEmClient();
+            // Count how many non-null assignments need a ViGEm controller.
+            int neededCount = assignments.Count(a => a.SourceDevicePath is not null);
+
+            // Create ViGEm pool on first call; grow if more controllers are needed.
+            bool firstInit = _vigemClient == null;
+            if (firstInit)
+            {
+                _vigemClient = new ViGEmClient();
+                Debug.WriteLine("[Forwarding] Created ViGEmClient (first init)");
+            }
+
+            // Grow pool to match needed count (never shrink — reuse existing).
+            int poolStartSize = _vigemPool.Count;
+            while (_vigemPool.Count < neededCount)
+            {
+                var vigem = new ViGEmController(_vigemClient!);
+                vigem.Connect();
+                _vigemPool.Add(vigem);
+                Debug.WriteLine($"[Forwarding] ViGEm pool: connected controller #{_vigemPool.Count} (slot {vigem.UserIndex})");
+            }
+
+            // Rebuild virtual slot indices from pool.
+            _virtualSlotIndices.Clear();
+            foreach (var v in _vigemPool)
+            {
+                if (v.UserIndex >= 0)
+                    _virtualSlotIndices.Add(v.UserIndex);
+            }
 
             // Whitelist our own process so we can still see hidden devices.
             var exePath = Environment.ProcessPath
@@ -63,36 +91,28 @@ public sealed class InputForwardingService : IInputForwardingService
 
             try
             {
+                int poolIdx = 0;
                 foreach (var assignment in assignments)
                 {
                     if (assignment.SourceDevicePath is null)
                         continue;
 
-                    // 1. Create ViGEm virtual controller.
-                    var vigem = new ViGEmController(_vigemClient);
-                    vigem.Connect();
+                    // Reuse ViGEm controller from the persistent pool.
+                    var vigem = _vigemPool[poolIdx++];
 
-                    // Track which XInput slot this virtual controller landed on.
-                    if (vigem.UserIndex >= 0)
-                        _virtualSlotIndices.Add(vigem.UserIndex);
-
-                    // 2. Hide the physical device via HidHide.
-                    // Convert HidSharp device path → PnP instance ID for HidHide.
-                    // Example: \\?\hid#vid_0b05&pid_1b4c&mi_05&ig_00#8&2be06c40&0&0000#{4d1e55b2-...}
-                    //        → HID\VID_0B05&PID_1B4C&MI_05&IG_00\8&2BE06C40&0&0000
+                    // Hide the physical device via HidHide.
                     string instanceId = DevicePathConverter.ToInstanceId(assignment.SourceDevicePath);
                     Debug.WriteLine($"[Forwarding] HidHide: hiding device for slot {assignment.TargetSlot}");
                     Debug.WriteLine($"[Forwarding]   HidSharp path: {assignment.SourceDevicePath}");
                     Debug.WriteLine($"[Forwarding]   Instance ID:   {instanceId}");
                     _hidHide.HideDevice(instanceId);
 
-                    // 3. Open the HID device for reading.
+                    // Open the HID device for reading.
                     var hidDevice = DeviceList.Local.GetHidDevices()
                         .FirstOrDefault(d => string.Equals(d.DevicePath, assignment.SourceDevicePath,
                             StringComparison.OrdinalIgnoreCase));
                     if (hidDevice is null)
                     {
-                        vigem.Dispose();
                         throw new InvalidOperationException(
                             $"HID device not found for path: {assignment.SourceDevicePath}");
                     }
@@ -104,11 +124,10 @@ public sealed class InputForwardingService : IInputForwardingService
                     }
                     catch
                     {
-                        vigem.Dispose();
                         throw;
                     }
 
-                    // 4. Create and start the forwarding pair.
+                    // Create and start the forwarding pair.
                     var pair = new ForwardingPair(
                         assignment.TargetSlot,
                         assignment.SourceDevicePath,
@@ -130,16 +149,31 @@ public sealed class InputForwardingService : IInputForwardingService
             }
             catch
             {
-                // Rollback: destroy any pairs we already created.
+                // Rollback: destroy pairs (HID streams only — ViGEm pool stays).
                 foreach (var pair in createdPairs)
                 {
                     try { pair.Dispose(); } catch { /* best effort */ }
                 }
 
-                _virtualSlotIndices.Clear();
                 _hidHide.ClearAllRules();
-                _vigemClient?.Dispose();
-                _vigemClient = null;
+
+                // If this was the first init and it failed, clean up the pool too.
+                if (firstInit)
+                {
+                    for (int i = _vigemPool.Count - 1; i >= poolStartSize; i--)
+                    {
+                        try { _vigemPool[i].Disconnect(); _vigemPool[i].Dispose(); } catch { }
+                    }
+                    _vigemPool.RemoveRange(poolStartSize, _vigemPool.Count - poolStartSize);
+
+                    if (_vigemPool.Count == 0)
+                    {
+                        _vigemClient?.Dispose();
+                        _vigemClient = null;
+                    }
+                    _virtualSlotIndices.Clear();
+                }
+
                 throw;
             }
         }
@@ -149,12 +183,16 @@ public sealed class InputForwardingService : IInputForwardingService
         }
     }
 
+    /// <summary>
+    /// Stops HID forwarding and clears HidHide rules.
+    /// ViGEm virtual controllers remain connected for reuse on next StartForwardingAsync.
+    /// </summary>
     public async Task StopForwardingAsync()
     {
         await _gate.WaitAsync();
         try
         {
-            // Stop and dispose all forwarding pairs.
+            // Stop and dispose all forwarding pairs (HID streams only).
             foreach (var pair in _pairs)
             {
                 try { pair.Dispose(); } catch { /* best effort */ }
@@ -163,6 +201,41 @@ public sealed class InputForwardingService : IInputForwardingService
 
             // Clear all HidHide rules and deactivate.
             _hidHide.ClearAllRules();
+
+            _activeAssignments.Clear();
+            // NOTE: ViGEm pool and _virtualSlotIndices are intentionally kept alive.
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Full revert: stops forwarding, disconnects all ViGEm controllers, clears HidHide.
+    /// Called by "Revert All" to restore physical controllers to their original slots.
+    /// </summary>
+    public async Task RevertAllAsync()
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            // Stop all forwarding pairs.
+            foreach (var pair in _pairs)
+            {
+                try { pair.Dispose(); } catch { /* best effort */ }
+            }
+            _pairs.Clear();
+
+            // Clear HidHide.
+            _hidHide.ClearAllRules();
+
+            // Disconnect and dispose all ViGEm controllers.
+            foreach (var vigem in _vigemPool)
+            {
+                try { vigem.Disconnect(); vigem.Dispose(); } catch { /* best effort */ }
+            }
+            _vigemPool.Clear();
 
             // Dispose the ViGEmBus client.
             _vigemClient?.Dispose();
@@ -181,7 +254,7 @@ public sealed class InputForwardingService : IInputForwardingService
     {
         ForwardingError?.Invoke(this, e);
 
-        // If all pairs have errored out, auto-stop.
+        // If all pairs have errored out, auto-stop (lightweight — keeps ViGEm).
         Interlocked.Increment(ref _errorCount);
         if (_errorCount >= _pairs.Count && _pairs.Count > 0)
         {
@@ -191,7 +264,7 @@ public sealed class InputForwardingService : IInputForwardingService
 
     public void Dispose()
     {
-        // Synchronous best-effort cleanup.
+        // Synchronous best-effort cleanup — full teardown including ViGEm.
         foreach (var pair in _pairs)
         {
             try { pair.Dispose(); } catch { /* best effort */ }
@@ -199,6 +272,12 @@ public sealed class InputForwardingService : IInputForwardingService
         _pairs.Clear();
 
         try { _hidHide.ClearAllRules(); } catch { /* best effort */ }
+
+        foreach (var vigem in _vigemPool)
+        {
+            try { vigem.Disconnect(); vigem.Dispose(); } catch { /* best effort */ }
+        }
+        _vigemPool.Clear();
 
         _vigemClient?.Dispose();
         _vigemClient = null;

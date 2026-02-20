@@ -520,10 +520,10 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            await _forwardingService.StopForwardingAsync();
+            await _forwardingService.RevertAllAsync();
             _viewModel.ExcludedSlotIndices = new HashSet<int>();
             _slotOrderStore.Clear();
-            NavLog("[Forwarding] Stopped — reverted to physical order, cleared saved order");
+            NavLog("[Forwarding] Reverted — ViGEm disconnected, physical order restored");
             if (RevertButton is not null)
                 RevertButton.Visibility = Visibility.Collapsed;
             _ = RefreshAsync();
@@ -607,8 +607,11 @@ public sealed partial class MainWindow : Window
             _suppressFocusEvents = false;
         }
 
-        // Start forwarding with the restored visual order
-        _ = ApplyForwardingAsync();
+        // Only start forwarding if not already active.
+        // WM_DEVICECHANGE refreshes must NOT restart forwarding — that would
+        // cause a ViGEm disconnect/reconnect chime loop.
+        if (!_forwardingService.IsForwarding)
+            _ = ApplyForwardingAsync();
     }
 
     /// <summary>
@@ -1427,6 +1430,10 @@ public sealed partial class MainWindow : Window
     private const int GWLP_WNDPROC             = -4;
     private const double DeviceChangeDebounceMs = 500;
 
+    // Diagnostic: raw WM_DEVICECHANGE event log for chime loop detection.
+    private static readonly string ChimeDumpPath =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "controlshift-chime-dump.txt");
+
     private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
     private static WndProcDelegate? _wndProc; // prevent GC
     private static IntPtr _oldWndProc;
@@ -1450,6 +1457,14 @@ public sealed partial class MainWindow : Window
     {
         if (msg == WM_DEVICECHANGE && (int)wParam == DBT_DEVNODES_CHANGED)
         {
+            // Log every raw WM_DEVICECHANGE event for chime loop diagnostics.
+            var line = $"[{DateTime.Now:HH:mm:ss.fff}] WM_DEVICECHANGE DBT_DEVNODES_CHANGED";
+            lock (_logLock)
+            {
+                try { System.IO.File.AppendAllText(ChimeDumpPath, line + System.Environment.NewLine); }
+                catch { /* diagnostic writes must never throw */ }
+            }
+
             _instance?.OnDeviceChangeNotification();
         }
 
