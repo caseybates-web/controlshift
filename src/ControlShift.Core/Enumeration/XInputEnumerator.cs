@@ -88,6 +88,21 @@ public sealed class XInputEnumerator : IXInputEnumerator
         // GetCapabilities returns true when a controller is connected at this slot.
         bool isConnected = XInput.GetCapabilities(userIndex, DeviceQueryType.Any, out Capabilities caps);
 
+        // DECISION: Ghost ViGEm device nodes (from previous sessions) can cause
+        // GetCapabilities to report a slot as connected even though no physical
+        // controller is present. Cross-check with GetState — if the device can't
+        // produce input state, it's a ghost and should be treated as disconnected.
+        if (isConnected)
+        {
+            bool hasState = XInput.GetState(userIndex, out _);
+            if (!hasState)
+            {
+                Debug.WriteLine($"[XInput] Slot{slotIndex}: GetCapabilities=connected but " +
+                                "GetState=ERROR_DEVICE_NOT_CONNECTED — treating as ghost/disconnected");
+                isConnected = false;
+            }
+        }
+
         if (!isConnected)
         {
             return new XInputSlotInfo(

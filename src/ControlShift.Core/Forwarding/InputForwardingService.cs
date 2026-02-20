@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using HidSharp;
 using Nefarius.ViGEm.Client;
 using ControlShift.Core.Devices;
@@ -51,9 +52,12 @@ public sealed class InputForwardingService : IInputForwardingService
 
             // Whitelist our own process so we can still see hidden devices.
             var exePath = Environment.ProcessPath
-                ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                ?? Process.GetCurrentProcess().MainModule?.FileName;
             if (exePath is not null)
+            {
+                Debug.WriteLine($"[Forwarding] HidHide allowlist: {exePath}");
                 _hidHide.AddApplicationRule(exePath);
+            }
 
             var createdPairs = new List<ForwardingPair>();
 
@@ -72,8 +76,14 @@ public sealed class InputForwardingService : IInputForwardingService
                     if (vigem.UserIndex >= 0)
                         _virtualSlotIndices.Add(vigem.UserIndex);
 
-                    // 2. Hide the physical device.
+                    // 2. Hide the physical device via HidHide.
+                    // Convert HidSharp device path → PnP instance ID for HidHide.
+                    // Example: \\?\hid#vid_0b05&pid_1b4c&mi_05&ig_00#8&2be06c40&0&0000#{4d1e55b2-...}
+                    //        → HID\VID_0B05&PID_1B4C&MI_05&IG_00\8&2BE06C40&0&0000
                     string instanceId = DevicePathConverter.ToInstanceId(assignment.SourceDevicePath);
+                    Debug.WriteLine($"[Forwarding] HidHide: hiding device for slot {assignment.TargetSlot}");
+                    Debug.WriteLine($"[Forwarding]   HidSharp path: {assignment.SourceDevicePath}");
+                    Debug.WriteLine($"[Forwarding]   Instance ID:   {instanceId}");
                     _hidHide.HideDevice(instanceId);
 
                     // 3. Open the HID device for reading.
@@ -111,6 +121,7 @@ public sealed class InputForwardingService : IInputForwardingService
                 }
 
                 // Activate HidHide now that all devices are hidden.
+                Debug.WriteLine($"[Forwarding] Activating HidHide ({createdPairs.Count} device(s) hidden)");
                 _hidHide.SetActive(true);
 
                 _pairs.AddRange(createdPairs);

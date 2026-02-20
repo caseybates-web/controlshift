@@ -33,7 +33,10 @@ public sealed class ControllerMatcher : IControllerMatcher
 
     /// <summary>
     /// ViGEm virtual Xbox 360 controllers report VID=045E PID=028E.
-    /// Exclude them from HID matching so they don't appear as phantom controllers in the UI.
+    /// Exclude them from HID matching — both active virtual controllers AND stale
+    /// ghost device nodes left behind by previous ViGEm sessions (PnP Status=Unknown).
+    /// These ghost nodes persist in the HID device tree after ViGEm disconnects and
+    /// cause phantom "Unknown Controller" cards in the UI if not filtered.
     /// </summary>
     private static bool IsViGEmVirtualController(HidDeviceInfo hid) =>
         string.Equals(hid.Vid, "045E", StringComparison.OrdinalIgnoreCase) &&
