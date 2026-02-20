@@ -36,6 +36,7 @@ public sealed class SlotViewModel : INotifyPropertyChanged
     private string _vidPid          = string.Empty;
     private string _batteryText     = string.Empty;
     private string? _devicePath;
+    private string _nickname     = string.Empty;
 
     public bool IsConnected
     {
@@ -52,7 +53,15 @@ public sealed class SlotViewModel : INotifyPropertyChanged
     public string DeviceName
     {
         get => _deviceName;
-        set => Set(ref _deviceName, value);
+        set
+        {
+            if (_deviceName != value)
+            {
+                Set(ref _deviceName, value);
+                // DisplayName falls back to DeviceName when no nickname is set.
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayName)));
+            }
+        }
     }
 
     public string ConnectionLabel
@@ -87,6 +96,27 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         get => _devicePath;
         set => Set(ref _devicePath, value);
     }
+
+    /// <summary>User-assigned nickname for this controller. Empty string when not set.</summary>
+    public string Nickname
+    {
+        get => _nickname;
+        set
+        {
+            var clean = value ?? string.Empty;
+            if (_nickname != clean)
+            {
+                Set(ref _nickname, clean);
+                // DisplayName depends on Nickname, so notify it too.
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayName)));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The name to display on the card: nickname if set, otherwise the auto-detected DeviceName.
+    /// </summary>
+    public string DisplayName => !string.IsNullOrEmpty(Nickname) ? Nickname : DeviceName;
 
     /// <summary>Segoe MDL2 Assets glyph for the battery level. Empty when no battery info.</summary>
     public string BatteryGlyph => BatteryText switch

@@ -46,6 +46,7 @@ public sealed partial class SlotCard : UserControl
 
     private SlotViewModel? _slot;
     private bool           _isRumbling;
+    private bool           _isRenaming;
     private CardState      _currentState = CardState.Normal;
 
     // ── Construction ──────────────────────────────────────────────────────────
@@ -64,6 +65,11 @@ public sealed partial class SlotCard : UserControl
         this.IsTabStop             = true;
         this.UseSystemFocusVisuals = false;
     }
+
+    // ── Events ───────────────────────────────────────────────────────────────
+
+    /// <summary>Fired when the user commits a nickname rename. Payload is the new nickname (empty = clear).</summary>
+    public event EventHandler<string>? NicknameChanged;
 
     // ── Slot data ─────────────────────────────────────────────────────────────
 
@@ -102,7 +108,7 @@ public sealed partial class SlotCard : UserControl
         ConnectedContent.Visibility  = Visibility.Visible;
         EmptyDash.Visibility         = Visibility.Collapsed;
 
-        DeviceName.Text = _slot.DeviceName;
+        DeviceName.Text = _slot.DisplayName;
 
         ConnectionText.Text       = _slot.ConnectionLabel;
         ConnectionText.Visibility = string.IsNullOrEmpty(_slot.ConnectionLabel)
@@ -212,6 +218,47 @@ public sealed partial class SlotCard : UserControl
         visual.StartAnimation("Scale.Y", anim);
     }
 
+    // ── Layout scale (handheld ↔ full-screen) ─────────────────────────────────
+
+    /// <summary>
+    /// Adjusts font sizes, padding, and corner radius for handheld (1.0) vs full-screen (~1.8) layout.
+    /// Called by MainWindow when the layout mode changes.
+    /// </summary>
+    public void SetLayoutScale(double scale)
+    {
+        // Player badge
+        SlotBadge.FontSize = 14 * scale;
+        PlayerBadgeBorder.Padding      = new Thickness(10 * scale, 5 * scale, 10 * scale, 5 * scale);
+        PlayerBadgeBorder.CornerRadius = new CornerRadius(8 * scale);
+        PlayerBadgeBorder.Margin       = new Thickness(0, 0, 14 * scale, 0);
+
+        // Device name + rename box
+        DeviceName.FontSize = 15 * scale;
+        RenameBox.FontSize  = 15 * scale;
+
+        // Connection text
+        ConnectionText.FontSize = 11 * scale;
+
+        // Badge fonts
+        IntegratedText.FontSize = 10 * scale;
+        BrandText.FontSize      = 10 * scale;
+
+        // VID:PID
+        VidPidText.FontSize = 10 * scale;
+
+        // Battery
+        BatteryIcon.FontSize = 14 * scale;
+        BatteryText.FontSize = 11 * scale;
+
+        // Card border
+        CardBorder.Padding      = new Thickness(16 * scale, 14 * scale, 16 * scale, 14 * scale);
+        CardBorder.CornerRadius = new CornerRadius(12 * scale);
+        CardBorder.MinHeight    = 80 * scale;
+
+        // Empty dash
+        EmptyDash.FontSize = 20 * scale;
+    }
+
     // ── Hold-to-reorder progress bar ──────────────────────────────────────────
 
     /// <summary>
@@ -289,5 +336,72 @@ public sealed partial class SlotCard : UserControl
     /// Mouse/touch tap handler — rumbles to identify this controller.
     /// Gamepad A-tap is handled separately by MainWindow (hold vs tap detection).
     /// </summary>
-    private void SlotCard_Tapped(object sender, TappedRoutedEventArgs e) => TriggerRumble();
+    private void SlotCard_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (!_isRenaming) TriggerRumble();
+    }
+
+    // ── Inline rename (double-click) ────────────────────────────────────────
+
+    /// <summary>
+    /// Double-click handler — enters inline rename mode for the controller name.
+    /// Only works when a controller is connected.
+    /// </summary>
+    private void SlotCard_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (_slot is null || !_slot.IsConnected || _isRenaming) return;
+        BeginRename();
+    }
+
+    private void BeginRename()
+    {
+        _isRenaming = true;
+        RenameBox.Text = DeviceName.Text;
+        DeviceName.Visibility = Visibility.Collapsed;
+        RenameBox.Visibility  = Visibility.Visible;
+        RenameBox.SelectAll();
+        RenameBox.Focus(FocusState.Programmatic);
+    }
+
+    private void CommitRename()
+    {
+        if (!_isRenaming) return;
+        _isRenaming = false;
+
+        var newName = RenameBox.Text?.Trim() ?? string.Empty;
+        RenameBox.Visibility  = Visibility.Collapsed;
+        DeviceName.Visibility = Visibility.Visible;
+
+        // Fire event so MainWindow can persist the nickname.
+        NicknameChanged?.Invoke(this, newName);
+    }
+
+    private void CancelRename()
+    {
+        if (!_isRenaming) return;
+        _isRenaming = false;
+
+        RenameBox.Visibility  = Visibility.Collapsed;
+        DeviceName.Visibility = Visibility.Visible;
+    }
+
+    private void RenameBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Enter)
+        {
+            e.Handled = true;
+            CommitRename();
+        }
+        else if (e.Key == Windows.System.VirtualKey.Escape)
+        {
+            e.Handled = true;
+            CancelRename();
+        }
+    }
+
+    private void RenameBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        // Commit on focus loss (clicking elsewhere).
+        CommitRename();
+    }
 }

@@ -2,7 +2,8 @@
     x:Class="ControlShift.App.Controls.SlotCard"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Tapped="SlotCard_Tapped">
+    Tapped="SlotCard_Tapped"
+    DoubleTapped="SlotCard_DoubleTapped">
 
     <UserControl.Resources>
         <!-- Jiggle storyboard: fires on tap-A (rumble only, not hold-A reorder).
@@ -67,11 +68,24 @@
                                 VerticalAlignment="Center" Spacing="3"
                                 Visibility="Collapsed">
 
-                        <!-- Controller name -->
+                        <!-- Controller name (display) -->
                         <TextBlock x:Name="DeviceName" Text=""
                                    FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"
                                    Foreground="{StaticResource XbTextBrush}"
                                    TextTrimming="CharacterEllipsis" />
+
+                        <!-- Inline rename TextBox — overlays DeviceName on double-click -->
+                        <TextBox x:Name="RenameBox"
+                                 FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"
+                                 Foreground="{StaticResource XbTextBrush}"
+                                 Background="Transparent"
+                                 BorderBrush="{StaticResource XbAccentBrush}"
+                                 BorderThickness="0,0,0,2"
+                                 Padding="0" Margin="0,-2,0,0"
+                                 MaxLength="40"
+                                 Visibility="Collapsed"
+                                 KeyDown="RenameBox_KeyDown"
+                                 LostFocus="RenameBox_LostFocus" />
 
                         <!-- Connection type: plain small text below name -->
                         <TextBlock x:Name="ConnectionText" Text=""
@@ -84,7 +98,7 @@
                             <Border x:Name="IntegratedBadge"
                                     Background="#1D4B1D" CornerRadius="8"
                                     Padding="8,2" Visibility="Collapsed">
-                                <TextBlock Text="INTEGRATED"
+                                <TextBlock x:Name="IntegratedText" Text="INTEGRATED"
                                            FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
                                            Foreground="{StaticResource XbAccentBrush}" />
                             </Border>
