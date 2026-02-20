@@ -74,7 +74,13 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _watchdogTimer;
     private          GamepadButtons  _prevGamepadButtons;
     private          short           _prevLeftThumbY;
+    private          short           _prevLeftThumbX;
+    private          bool            _prevViewButton;
     private          bool            _windowActive = true;
+
+    // Full-screen / layout mode
+    private bool   _isFullScreen;
+    private double _layoutScale = 1.0;
 
     // A-button hold/tap state
     private DateTime? _aHoldStart;           // when A was first pressed; null when not held
@@ -225,6 +231,11 @@ public sealed partial class MainWindow : Window
         ExitButton.GotFocus         += (_, _) => OnElementGotFocus(ExitButton);
         ExitButton.LostFocus        += (_, _) => OnElementLostFocus(ExitButton);
 
+        FullScreenToggle.GotFocus   += (_, _) => OnElementGotFocus(FullScreenToggle);
+        FullScreenToggle.LostFocus  += (_, _) => OnElementLostFocus(FullScreenToggle);
+
+        ConfigureGridForLayout();
+
         // Per-device forwarding is started on-demand via ApplyForwardingAsync()
         // when the user confirms a reorder. No upfront initialization needed.
     }
@@ -275,16 +286,19 @@ public sealed partial class MainWindow : Window
         }
 
         // Add missing cards
+        var margin = _isFullScreen ? new Thickness(12, 8, 12, 8) : new Thickness(8, 4, 8, 4);
         while (_cards.Count < count)
         {
-            var card = new SlotCard { Margin = new Thickness(8, 4, 8, 4) };
+            var card = new SlotCard { Margin = margin };
             card.GotFocus        += (_, _) => OnElementGotFocus(card);
             card.LostFocus       += (_, _) => OnElementLostFocus(card);
             card.NicknameChanged += OnCardNicknameChanged;
+            card.SetLayoutScale(_layoutScale);
             _cards.Add(card);
             SlotPanel.Children.Add(card);
         }
 
+        UpdateGridPositions();
         SyncTabIndices();
     }
 
@@ -346,7 +360,59 @@ public sealed partial class MainWindow : Window
         _cards.AddRange(newOrder);
         foreach (var card in _cards)
             SlotPanel.Children.Add(card);
+        UpdateGridPositions();
         SyncTabIndices();
+    }
+
+    // ── Grid layout management ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Configures SlotPanel's RowDefinitions and ColumnDefinitions for the current layout mode.
+    /// Handheld: N Auto rows x 1 Star column (vertical stack). Full-screen: 1 Star row x N Star columns (horizontal).
+    /// </summary>
+    private void ConfigureGridForLayout()
+    {
+        SlotPanel.RowDefinitions.Clear();
+        SlotPanel.ColumnDefinitions.Clear();
+
+        int count = _cards.Count;
+        if (count == 0) count = 4; // pre-allocate for expected 4 slots
+
+        if (_isFullScreen)
+        {
+            SlotPanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            for (int i = 0; i < count; i++)
+                SlotPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
+        else
+        {
+            for (int i = 0; i < count; i++)
+                SlotPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            SlotPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
+
+        UpdateGridPositions();
+    }
+
+    /// <summary>
+    /// Sets Grid.Row/Grid.Column on each card based on the current layout mode.
+    /// Handheld: card[i] at row=i, col=0. Full-screen: card[i] at row=0, col=i.
+    /// </summary>
+    private void UpdateGridPositions()
+    {
+        for (int i = 0; i < _cards.Count; i++)
+        {
+            if (_isFullScreen)
+            {
+                Grid.SetRow(_cards[i], 0);
+                Grid.SetColumn(_cards[i], i);
+            }
+            else
+            {
+                Grid.SetRow(_cards[i], i);
+                Grid.SetColumn(_cards[i], 0);
+            }
+        }
     }
 
     /// <summary>
@@ -401,6 +467,7 @@ public sealed partial class MainWindow : Window
         if (RevertButton.Visibility == Visibility.Visible)
             elements.Add(RevertButton);
         elements.Add(SaveProfileButton);
+        elements.Add(FullScreenToggle);
         elements.Add(ProfilesButton);
         elements.Add(ExitButton);
 
@@ -965,6 +1032,7 @@ public sealed partial class MainWindow : Window
 
             GamepadButtons current   = default;
             short          maxThumbY = 0;
+            short          maxThumbX = 0;
 
             for (uint i = 0; i < 4; i++)
             {
@@ -973,6 +1041,8 @@ public sealed partial class MainWindow : Window
                     current |= state.Gamepad.Buttons;
                     if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
                         maxThumbY = state.Gamepad.LeftThumbY;
+                    if (Math.Abs(state.Gamepad.LeftThumbX) > Math.Abs(maxThumbX))
+                        maxThumbX = state.Gamepad.LeftThumbX;
                 }
             }
 
@@ -984,19 +1054,41 @@ public sealed partial class MainWindow : Window
             bool stickDown = maxThumbY < -StickDeadzoneThreshold && _prevLeftThumbY >= -StickDeadzoneThreshold;
             _prevLeftThumbY = maxThumbY;
 
+            bool stickLeft  = maxThumbX < -StickDeadzoneThreshold && _prevLeftThumbX >= -StickDeadzoneThreshold;
+            bool stickRight = maxThumbX >  StickDeadzoneThreshold && _prevLeftThumbX <=  StickDeadzoneThreshold;
+            _prevLeftThumbX = maxThumbX;
+
             bool navUp        = (newPresses  & GamepadButtons.DPadUp)   != 0 || stickUp;
             bool navDown      = (newPresses  & GamepadButtons.DPadDown)  != 0 || stickDown;
+            bool navLeft      = (newPresses  & GamepadButtons.DPadLeft)  != 0 || stickLeft;
+            bool navRight     = (newPresses  & GamepadButtons.DPadRight) != 0 || stickRight;
             bool pressB       = (newPresses  & GamepadButtons.B)         != 0;
             bool aJustPressed = (newPresses  & GamepadButtons.A)         != 0;
             bool aJustReleased= (newReleases & GamepadButtons.A)         != 0;
+
+            // View button (Back) edge detection → toggle full-screen
+            bool viewNow = (current & GamepadButtons.Back) != 0;
+            if (viewNow && !_prevViewButton && _reorderingIndex < 0)
+                ToggleFullScreen();
+            _prevViewButton = viewNow;
 
             // ── Phase 2: UI mutations ─────────────────────────────────────────────────
 
             if (_reorderingIndex >= 0)
             {
                 // ── Reorder mode: d-pad/stick moves card; A confirms; B cancels ──────
-                if (navUp)        { NavLog("[NavTick] → MoveReorderingCard(-1)"); MoveReorderingCard(-1); }
-                if (navDown)      { NavLog("[NavTick] → MoveReorderingCard(+1)"); MoveReorderingCard(+1); }
+                if (_isFullScreen)
+                {
+                    // Horizontal layout: left/right moves card
+                    if (navLeft)  { NavLog("[NavTick] → MoveReorderingCard(-1) [horiz]"); MoveReorderingCard(-1); }
+                    if (navRight) { NavLog("[NavTick] → MoveReorderingCard(+1) [horiz]"); MoveReorderingCard(+1); }
+                }
+                else
+                {
+                    // Vertical layout: up/down moves card
+                    if (navUp)    { NavLog("[NavTick] → MoveReorderingCard(-1)"); MoveReorderingCard(-1); }
+                    if (navDown)  { NavLog("[NavTick] → MoveReorderingCard(+1)"); MoveReorderingCard(+1); }
+                }
                 if (aJustPressed) { NavLog("[NavTick] → ConfirmReorder");         ConfirmReorder(); }
                 if (pressB)       { NavLog("[NavTick] → CancelReorder");          CancelReorder(); }
             }
@@ -1006,16 +1098,78 @@ public sealed partial class MainWindow : Window
                 var elements = GetFocusableElementsInOrder();
                 int curIdx = _focusedElement is not null ? elements.IndexOf(_focusedElement) : -1;
 
-                if (navUp && curIdx > 0)
+                if (_isFullScreen)
                 {
-                    NavLog($"[NavTick] → Focus element {curIdx - 1} (up)");
-                    elements[curIdx - 1].Focus(FocusState.Programmatic);
+                    // Horizontal card row: left/right navigates between cards,
+                    // down from any card → first footer button, up from footer → last card.
+                    int fsCardIdx = FocusedCardIndex;
+                    if (navLeft && fsCardIdx > 0)
+                    {
+                        NavLog($"[NavTick] → Focus card {fsCardIdx - 1} (left)");
+                        _cards[fsCardIdx - 1].Focus(FocusState.Programmatic);
+                    }
+                    if (navRight && fsCardIdx >= 0 && fsCardIdx < _cards.Count - 1)
+                    {
+                        NavLog($"[NavTick] → Focus card {fsCardIdx + 1} (right)");
+                        _cards[fsCardIdx + 1].Focus(FocusState.Programmatic);
+                    }
+                    if (navDown && fsCardIdx >= 0)
+                    {
+                        // Down from card row → first footer button
+                        int firstBtn = _cards.Count; // index past cards in elements list
+                        if (firstBtn < elements.Count)
+                        {
+                            NavLog($"[NavTick] → Focus footer button (down from card)");
+                            elements[firstBtn].Focus(FocusState.Programmatic);
+                        }
+                    }
+                    else if (navDown && curIdx >= _cards.Count && curIdx < elements.Count - 1)
+                    {
+                        // Down within footer buttons
+                        NavLog($"[NavTick] → Focus element {curIdx + 1} (down in footer)");
+                        elements[curIdx + 1].Focus(FocusState.Programmatic);
+                    }
+                    if (navUp && curIdx > 0 && curIdx >= _cards.Count)
+                    {
+                        if (curIdx == _cards.Count)
+                        {
+                            // Up from first footer button → last card
+                            NavLog($"[NavTick] → Focus card {_cards.Count - 1} (up to cards)");
+                            _cards[_cards.Count - 1].Focus(FocusState.Programmatic);
+                        }
+                        else
+                        {
+                            // Up within footer buttons
+                            NavLog($"[NavTick] → Focus element {curIdx - 1} (up in footer)");
+                            elements[curIdx - 1].Focus(FocusState.Programmatic);
+                        }
+                    }
+                    // Left/right in footer buttons
+                    if (navLeft && curIdx >= _cards.Count && curIdx > _cards.Count)
+                    {
+                        NavLog($"[NavTick] → Focus element {curIdx - 1} (left in footer)");
+                        elements[curIdx - 1].Focus(FocusState.Programmatic);
+                    }
+                    if (navRight && curIdx >= _cards.Count && curIdx < elements.Count - 1)
+                    {
+                        NavLog($"[NavTick] → Focus element {curIdx + 1} (right in footer)");
+                        elements[curIdx + 1].Focus(FocusState.Programmatic);
+                    }
                 }
-                if (navDown && curIdx < elements.Count - 1)
+                else
                 {
-                    int nextIdx = curIdx < 0 ? 0 : curIdx + 1;
-                    NavLog($"[NavTick] → Focus element {nextIdx} (down)");
-                    elements[nextIdx].Focus(FocusState.Programmatic);
+                    // Handheld: vertical list — up/down navigates everything linearly
+                    if (navUp && curIdx > 0)
+                    {
+                        NavLog($"[NavTick] → Focus element {curIdx - 1} (up)");
+                        elements[curIdx - 1].Focus(FocusState.Programmatic);
+                    }
+                    if (navDown && curIdx < elements.Count - 1)
+                    {
+                        int nextIdx = curIdx < 0 ? 0 : curIdx + 1;
+                        NavLog($"[NavTick] → Focus element {nextIdx} (down)");
+                        elements[nextIdx].Focus(FocusState.Programmatic);
+                    }
                 }
 
                 // ── A button on cards: tap = rumble, hold = reorder ──────────────────
@@ -1068,6 +1222,7 @@ public sealed partial class MainWindow : Window
     {
         if (btn == RevertButton) RevertButton_Click(btn, new RoutedEventArgs());
         else if (btn == SaveProfileButton) SaveProfileButton_Click(btn, new RoutedEventArgs());
+        else if (btn == FullScreenToggle) FullScreenToggle_Click(btn, new RoutedEventArgs());
         else if (btn == ProfilesButton) ProfilesButton_Click(btn, new RoutedEventArgs());
         else if (btn == ExitButton) ExitButton_Click(btn, new RoutedEventArgs());
     }
@@ -1148,40 +1303,83 @@ public sealed partial class MainWindow : Window
     {
         if (_reorderingIndex >= 0)
         {
-            switch (e.Key)
+            if (_isFullScreen)
             {
-                case VirtualKey.Up:
-                case VirtualKey.GamepadDPadUp:
-                case VirtualKey.GamepadLeftThumbstickUp:
-                    NavLog("[KeyDown] MoveReorderingCard(-1)");
-                    MoveReorderingCard(-1);
-                    e.Handled = true;
-                    break;
-                case VirtualKey.Down:
-                case VirtualKey.GamepadDPadDown:
-                case VirtualKey.GamepadLeftThumbstickDown:
-                    NavLog("[KeyDown] MoveReorderingCard(+1)");
-                    MoveReorderingCard(+1);
-                    e.Handled = true;
-                    break;
-                case VirtualKey.Enter:
-                case VirtualKey.Space:
-                    NavLog("[KeyDown] ConfirmReorder (keyboard)");
-                    ConfirmReorder();
-                    e.Handled = true;
-                    break;
-                case VirtualKey.Escape:
-                case VirtualKey.GamepadB:
-                    NavLog("[KeyDown] CancelReorder");
-                    CancelReorder();
-                    e.Handled = true;
-                    break;
+                // Horizontal layout: left/right moves card
+                switch (e.Key)
+                {
+                    case VirtualKey.Left:
+                    case VirtualKey.GamepadDPadLeft:
+                    case VirtualKey.GamepadLeftThumbstickLeft:
+                        NavLog("[KeyDown] MoveReorderingCard(-1) [horiz]");
+                        MoveReorderingCard(-1);
+                        e.Handled = true;
+                        break;
+                    case VirtualKey.Right:
+                    case VirtualKey.GamepadDPadRight:
+                    case VirtualKey.GamepadLeftThumbstickRight:
+                        NavLog("[KeyDown] MoveReorderingCard(+1) [horiz]");
+                        MoveReorderingCard(+1);
+                        e.Handled = true;
+                        break;
+                    case VirtualKey.Enter:
+                    case VirtualKey.Space:
+                        NavLog("[KeyDown] ConfirmReorder (keyboard)");
+                        ConfirmReorder();
+                        e.Handled = true;
+                        break;
+                    case VirtualKey.Escape:
+                    case VirtualKey.GamepadB:
+                        NavLog("[KeyDown] CancelReorder");
+                        CancelReorder();
+                        e.Handled = true;
+                        break;
+                }
+            }
+            else
+            {
+                // Vertical layout: up/down moves card
+                switch (e.Key)
+                {
+                    case VirtualKey.Up:
+                    case VirtualKey.GamepadDPadUp:
+                    case VirtualKey.GamepadLeftThumbstickUp:
+                        NavLog("[KeyDown] MoveReorderingCard(-1)");
+                        MoveReorderingCard(-1);
+                        e.Handled = true;
+                        break;
+                    case VirtualKey.Down:
+                    case VirtualKey.GamepadDPadDown:
+                    case VirtualKey.GamepadLeftThumbstickDown:
+                        NavLog("[KeyDown] MoveReorderingCard(+1)");
+                        MoveReorderingCard(+1);
+                        e.Handled = true;
+                        break;
+                    case VirtualKey.Enter:
+                    case VirtualKey.Space:
+                        NavLog("[KeyDown] ConfirmReorder (keyboard)");
+                        ConfirmReorder();
+                        e.Handled = true;
+                        break;
+                    case VirtualKey.Escape:
+                    case VirtualKey.GamepadB:
+                        NavLog("[KeyDown] CancelReorder");
+                        CancelReorder();
+                        e.Handled = true;
+                        break;
+                }
             }
         }
         else
         {
             switch (e.Key)
             {
+                case VirtualKey.F11:
+                    NavLog("[KeyDown] F11 → ToggleFullScreen");
+                    ToggleFullScreen();
+                    e.Handled = true;
+                    break;
+
                 case VirtualKey.Enter:
                 case VirtualKey.Space:
                     if (FocusedCardIndex >= 0)
@@ -1328,10 +1526,15 @@ public sealed partial class MainWindow : Window
         _suppressFocusEvents = true;
         try
         {
-            SlotPanel.Children.RemoveAt(_reorderingIndex);
-            SlotPanel.Children.Insert(newIdx, movingCard);
+            // Swap the two cards in the list
+            (_cards[_reorderingIndex], _cards[newIdx]) = (_cards[newIdx], _cards[_reorderingIndex]);
 
-            RebuildCardsFromPanel();
+            // Rebuild SlotPanel children from the new _cards order
+            SlotPanel.Children.Clear();
+            foreach (var c in _cards)
+                SlotPanel.Children.Add(c);
+
+            UpdateGridPositions();
             SyncTabIndices();
 
             _reorderingIndex = newIdx;
@@ -1371,6 +1574,7 @@ public sealed partial class MainWindow : Window
     {
         ApplyButtonFocusVisual(RevertButton, ReferenceEquals(_focusedElement, RevertButton));
         ApplyButtonFocusVisual(SaveProfileButton, ReferenceEquals(_focusedElement, SaveProfileButton));
+        ApplyButtonFocusVisual(FullScreenToggle, ReferenceEquals(_focusedElement, FullScreenToggle));
         ApplyButtonFocusVisual(ProfilesButton, ReferenceEquals(_focusedElement, ProfilesButton));
         ApplyButtonFocusVisual(ExitButton, ReferenceEquals(_focusedElement, ExitButton));
     }
@@ -1391,6 +1595,86 @@ public sealed partial class MainWindow : Window
     //   2. All D-pad focus movement via explicit _cards[n].Focus(Programmatic)
     //      in NavTimer_Tick (gamepad) and ContentGrid_KeyDown (keyboard / Tab)
     //   3. Tab order driven purely by TabIndex, rebuilt after every reorder
+
+    // ── Full-screen toggle ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Toggles between handheld (400x700 windowed) and full-screen horizontal layout.
+    /// </summary>
+    private void ToggleFullScreen()
+    {
+        // Don't toggle while reordering — it would break the state machine.
+        if (_reorderingIndex >= 0) return;
+
+        _isFullScreen = !_isFullScreen;
+        _layoutScale  = _isFullScreen ? 1.8 : 1.0;
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var appWindow = AppWindow.GetFromWindowId(
+            Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
+
+        if (_isFullScreen)
+            appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+        else
+        {
+            appWindow.SetPresenter(AppWindowPresenterKind.Default);
+            SetWindowSize(WindowWidth, WindowHeight);
+        }
+
+        // Reconfigure Grid layout (vertical ↔ horizontal)
+        ConfigureGridForLayout();
+
+        // Update card margins and scale
+        var margin = _isFullScreen ? new Thickness(12, 8, 12, 8) : new Thickness(8, 4, 8, 4);
+        foreach (var card in _cards)
+        {
+            card.Margin = margin;
+            card.SetLayoutScale(_layoutScale);
+        }
+
+        // Scale header/footer elements
+        ApplyLayoutScale();
+
+        // ScrollViewer: disabled in full-screen (everything fits), auto in handheld
+        CardScrollViewer.VerticalScrollBarVisibility = _isFullScreen
+            ? ScrollBarVisibility.Disabled
+            : ScrollBarVisibility.Auto;
+
+        // Update toggle button glyph
+        FullScreenToggle.Content = _isFullScreen ? "\uE73F" : "\uE740";
+
+        NavLog($"[ToggleFullScreen] isFullScreen={_isFullScreen} layoutScale={_layoutScale}");
+    }
+
+    /// <summary>
+    /// Scales header title, version text, and footer button sizes proportionally to layoutScale.
+    /// </summary>
+    private void ApplyLayoutScale()
+    {
+        double s = _layoutScale;
+
+        // Header
+        HeaderTitle.FontSize   = 18 * s;
+        HeaderVersion.FontSize = 11 * s;
+
+        // Full-screen toggle button
+        FullScreenToggle.FontSize = 14 * s;
+        FullScreenToggle.Padding  = new Thickness(6 * s, 4 * s, 6 * s, 4 * s);
+
+        // Profiles button
+        ProfilesButton.FontSize = 11 * s;
+        ProfilesButton.Padding  = new Thickness(10 * s, 4 * s, 10 * s, 4 * s);
+
+        // Footer buttons
+        RevertButton.FontSize      = 14 * s;
+        RevertButton.Padding       = new Thickness(16 * s, 8 * s, 16 * s, 8 * s);
+        SaveProfileButton.FontSize = 14 * s;
+        SaveProfileButton.Padding  = new Thickness(16 * s, 8 * s, 16 * s, 8 * s);
+        ExitButton.FontSize        = 14 * s;
+        ExitButton.Padding         = new Thickness(16 * s, 10 * s, 16 * s, 16 * s);
+    }
+
+    private void FullScreenToggle_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
     // ── Window sizing ─────────────────────────────────────────────────────────
 

@@ -13,13 +13,25 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header: title left, profiles button + version right -->
-        <Grid Grid.Row="0" Padding="20,20,20,14">
-            <TextBlock Text="ControlShift"
+        <!-- Header: title left, full-screen toggle + profiles button + version right -->
+        <Grid x:Name="HeaderGrid" Grid.Row="0" Padding="20,20,20,14">
+            <TextBlock x:Name="HeaderTitle" Text="ControlShift"
                        FontFamily="Segoe UI" FontSize="18" FontWeight="Bold"
                        Foreground="{StaticResource XbTextBrush}"
                        HorizontalAlignment="Left" VerticalAlignment="Center" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="12">
+                <Button x:Name="FullScreenToggle"
+                        Content="&#xE740;"
+                        FontFamily="Segoe MDL2 Assets"
+                        Padding="6,4"
+                        FontSize="14"
+                        Background="#2D2D2D"
+                        Foreground="{StaticResource XbTextMutedBrush}"
+                        BorderThickness="1"
+                        BorderBrush="#404040"
+                        CornerRadius="2"
+                        Click="FullScreenToggle_Click"
+                        ToolTipService.ToolTip="Toggle full-screen (F11)" />
                 <Button x:Name="ProfilesButton"
                         Content="Profiles"
                         Padding="10,4"
@@ -30,7 +42,7 @@
                         BorderBrush="#404040"
                         CornerRadius="2"
                         Click="ProfilesButton_Click" />
-                <TextBlock Text="v0.3"
+                <TextBlock x:Name="HeaderVersion" Text="v0.3"
                            FontFamily="Segoe UI" FontSize="11"
                            Foreground="{StaticResource XbTextMutedBrush}"
                            VerticalAlignment="Center" />
@@ -40,13 +52,13 @@
         <!-- Scrollable card list -->
         <!-- Padding="16,6" gives 6px top/bottom clearance inside the viewport so
              the scale-swell on the first/last card is not clipped by ScrollViewer. -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,6,16,6">
+        <ScrollViewer x:Name="CardScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,6,16,6">
             <StackPanel Spacing="0">
 
-                <!-- Spacing="0" — gap comes from each SlotCard's Margin (4px top + 4px bottom
-                     = 8px between card surfaces); 8px sides give the swell room to expand. -->
-                <StackPanel x:Name="SlotPanel" Spacing="0"
-                            XYFocusKeyboardNavigation="Disabled" />
+                <!-- Cards panel: Grid with dynamic row/column definitions set in code-behind.
+                     Handheld = single column (mimics StackPanel); full-screen = horizontal row. -->
+                <Grid x:Name="SlotPanel"
+                      XYFocusKeyboardNavigation="Disabled" />
 
                 <!-- UNASSIGNED section: hidden until Core surfaces unmatched HID devices -->
                 <TextBlock x:Name="UnassignedHeader"
