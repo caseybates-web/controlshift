@@ -185,11 +185,28 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCards()
     {
+        // Sync _cards to the panel's current visual order before applying slot data.
+        // Ensures d-pad navigation always follows what the user sees on screen,
+        // even if a refresh fires while cards are in a reordered visual state.
+        RebuildCardsFromPanel();
+
         for (int i = 0; i < _cards.Length; i++)
         {
             if (i < _viewModel.Slots.Count)
                 _cards[i].SetSlot(_viewModel.Slots[i]);
         }
+    }
+
+    /// <summary>
+    /// Rebuilds _cards[] from SlotPanel.Children in visual top-to-bottom order.
+    /// Call after ANY operation that modifies SlotPanel.Children (reorder, cancel,
+    /// refresh) to guarantee _cards always matches what the user sees on screen.
+    /// </summary>
+    private void RebuildCardsFromPanel()
+    {
+        var inOrder = SlotPanel.Children.OfType<SlotCard>().ToArray();
+        for (int i = 0; i < _cards.Length && i < inOrder.Length; i++)
+            _cards[i] = inOrder[i];
     }
 
     private void ExitButton_Click(object sender, RoutedEventArgs e)
@@ -583,7 +600,8 @@ public sealed partial class MainWindow : Window
             foreach (var card in _cards)
                 SlotPanel.Children.Add(card);
 
-            // Rebuild TabIndex to match the restored visual order.
+            // Rebuild _cards from panel and fix TabIndex — single source of truth.
+            RebuildCardsFromPanel();
             for (int i = 0; i < _cards.Length; i++)
                 _cards[i].TabIndex = i;
 
@@ -656,7 +674,8 @@ public sealed partial class MainWindow : Window
             SlotPanel.Children.RemoveAt(_reorderingIndex);
             SlotPanel.Children.Insert(newIdx, movingCard);
 
-            (_cards[_reorderingIndex], _cards[newIdx]) = (_cards[newIdx], _cards[_reorderingIndex]);
+            // Always derive _cards order from the panel — single source of truth.
+            RebuildCardsFromPanel();
 
             for (int i = 0; i < _cards.Length; i++)
                 _cards[i].TabIndex = i;
