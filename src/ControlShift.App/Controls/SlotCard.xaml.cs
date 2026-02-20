@@ -73,6 +73,9 @@ public sealed partial class SlotCard : UserControl
     /// <summary>VID:PID in uppercase hex (e.g. "045E:02FD"). Empty when no HID match.</summary>
     public string VidPid => _slot?.VidPid ?? string.Empty;
 
+    /// <summary>HID device path for this controller, or null when no HID match.</summary>
+    public string? DevicePath => _slot?.DevicePath;
+
     /// <summary>Update the card to display the given slot view model.</summary>
     public void SetSlot(SlotViewModel slot)
     {
