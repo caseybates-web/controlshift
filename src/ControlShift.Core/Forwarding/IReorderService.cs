@@ -16,4 +16,11 @@ public interface IReorderService : IDisposable
 
     /// <summary>True if the forwarding stack is running.</summary>
     bool IsActive { get; }
+
+    /// <summary>
+    /// XInput slot indices assigned to virtual controllers.
+    /// These slots should be excluded from UI enumeration.
+    /// Empty until <see cref="IsActive"/> is true.
+    /// </summary>
+    IReadOnlySet<int> VirtualSlotIndices { get; }
 }

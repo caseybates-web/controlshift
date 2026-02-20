@@ -13,6 +13,12 @@ public sealed class MainViewModel
     private readonly IHidEnumerator      _hid;
     private readonly IControllerMatcher  _matcher;
 
+    /// <summary>
+    /// XInput slot indices to exclude from UI enumeration (e.g. ViGEm virtual controller slots).
+    /// Set by MainWindow after forwarding stack initializes.
+    /// </summary>
+    public IReadOnlySet<int> ExcludedSlotIndices { get; set; } = new HashSet<int>();
+
     public ObservableCollection<SlotViewModel> Slots { get; } = new();
 
     public MainViewModel(
@@ -87,10 +93,12 @@ public sealed class MainViewModel
         }
         catch { /* diagnostic writes must never throw */ }
 
-        // Build VMs from matched data.
+        // Build VMs from matched data, excluding virtual controller slots.
         var vms = new List<SlotViewModel>(matched.Count);
         for (int i = 0; i < matched.Count; i++)
         {
+            if (ExcludedSlotIndices.Contains(matched[i].SlotIndex))
+                continue;
             var vm = new SlotViewModel(matched[i].SlotIndex);
             vm.UpdateFrom(matched[i]);
             vms.Add(vm);

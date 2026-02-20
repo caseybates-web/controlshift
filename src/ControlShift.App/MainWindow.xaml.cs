@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Vortice.XInput;
 using Windows.Graphics;
@@ -26,7 +27,7 @@ public sealed partial class MainWindow : Window
 
     private readonly MainViewModel   _viewModel;
     private readonly DispatcherTimer _pollTimer;
-    private readonly SlotCard[]      _cards = new SlotCard[4];
+    private readonly List<SlotCard>  _cards = new();
 
     // ── Forwarding stack ─────────────────────────────────────────────────────
 
@@ -34,12 +35,12 @@ public sealed partial class MainWindow : Window
 
     // ── Navigation state ──────────────────────────────────────────────────────
 
-    /// <summary>Index of the card that currently has keyboard/gamepad focus. -1 = none.</summary>
-    private int _focusedCardIndex = -1;
-    /// <summary>Index of the card currently being reordered. -1 = not in reorder mode.</summary>
+    /// <summary>Currently focused UI element (SlotCard or Button). Null = none.</summary>
+    private UIElement? _focusedElement;
+    /// <summary>Index of the card currently being reordered (in _cards). -1 = not in reorder mode.</summary>
     private int _reorderingIndex  = -1;
-    /// <summary>Snapshot of _cards[] when reorder mode was entered, for snap-back on cancel.</summary>
-    private readonly SlotCard[] _savedOrder = new SlotCard[4];
+    /// <summary>Snapshot of _cards when reorder mode was entered, for snap-back on cancel.</summary>
+    private readonly List<SlotCard> _savedOrder = new();
 
     // ── XInput polling ────────────────────────────────────────────────────────
 
@@ -108,16 +109,8 @@ public sealed partial class MainWindow : Window
 
         SetWindowSize(400, 700);
 
-        // Build 4 fixed slot cards — one per XInput slot P1–P4.
-        // Margin="8,4,8,4": 8px horizontal gives the 1.03 swell room within the
-        // ScrollContentPresenter clip; 4px vertical keeps the 8px card-to-card gap
-        // (4 bottom + 4 top) while guarding the first/last card's swell at the
-        // top/bottom viewport edge. Preserved intact through all reorder moves.
-        for (int i = 0; i < 4; i++)
-        {
-            _cards[i] = new SlotCard { Margin = new Thickness(8, 4, 8, 4) };
-            SlotPanel.Children.Add(_cards[i]);
-        }
+        // Cards are created dynamically in UpdateCards() based on how many
+        // non-excluded slots the ViewModel returns (could be 1–4).
 
         // Defer XYFocus links, TabIndex, and focus events to ContentGrid.Loaded.
         // Setting XYFocusUp/Down or TabIndex before the compositor tree is ready
@@ -169,15 +162,13 @@ public sealed partial class MainWindow : Window
     private void OnContentGridLoaded(object sender, RoutedEventArgs e)
     {
         ContentGrid.Loaded -= OnContentGridLoaded;
-        NavLog("OnContentGridLoaded — wiring TabIndex + focus events");
+        NavLog("OnContentGridLoaded — wiring focus events on footer buttons");
 
-        for (int i = 0; i < 4; i++)
-        {
-            _cards[i].TabIndex = i;
-            int idx = i; // capture for closure
-            _cards[i].GotFocus  += (_, _) => OnCardGotFocus(idx);
-            _cards[i].LostFocus += (_, _) => OnCardLostFocus(idx);
-        }
+        // Wire focus tracking on footer buttons (cards are wired dynamically in EnsureCards).
+        RevertButton.GotFocus  += (_, _) => OnElementGotFocus(RevertButton);
+        RevertButton.LostFocus += (_, _) => OnElementLostFocus(RevertButton);
+        ExitButton.GotFocus    += (_, _) => OnElementGotFocus(ExitButton);
+        ExitButton.LostFocus   += (_, _) => OnElementLostFocus(ExitButton);
 
         // Initialize forwarding stack (HidHide + ViGEm + 125Hz loop).
         // Runs on a background thread to avoid blocking the UI.
@@ -194,29 +185,93 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCards()
     {
-        // Sync _cards to the panel's current visual order before applying slot data.
-        // Ensures d-pad navigation always follows what the user sees on screen,
-        // even if a refresh fires while cards are in a reordered visual state.
-        RebuildCardsFromPanel();
-
-        for (int i = 0; i < _cards.Length; i++)
+        // If in reorder mode, don't recreate cards — just update data on existing ones.
+        if (_reorderingIndex >= 0)
         {
-            if (i < _viewModel.Slots.Count)
+            RebuildCardsFromPanel();
+            for (int i = 0; i < _cards.Count && i < _viewModel.Slots.Count; i++)
                 _cards[i].SetSlot(_viewModel.Slots[i]);
+            return;
         }
+
+        EnsureCards(_viewModel.Slots.Count);
+
+        for (int i = 0; i < _cards.Count && i < _viewModel.Slots.Count; i++)
+            _cards[i].SetSlot(_viewModel.Slots[i]);
     }
 
     /// <summary>
-    /// Rebuilds _cards[] from SlotPanel.Children in visual top-to-bottom order.
+    /// Ensures SlotPanel has exactly <paramref name="count"/> SlotCards.
+    /// Creates or removes cards as needed; wires focus events on new cards.
+    /// </summary>
+    private void EnsureCards(int count)
+    {
+        // Remove excess cards
+        while (_cards.Count > count)
+        {
+            var card = _cards[^1];
+            _cards.RemoveAt(_cards.Count - 1);
+            SlotPanel.Children.Remove(card);
+        }
+
+        // Add missing cards
+        while (_cards.Count < count)
+        {
+            var card = new SlotCard { Margin = new Thickness(8, 4, 8, 4) };
+            card.GotFocus  += (_, _) => OnElementGotFocus(card);
+            card.LostFocus += (_, _) => OnElementLostFocus(card);
+            _cards.Add(card);
+            SlotPanel.Children.Add(card);
+        }
+
+        // Sync TabIndex
+        for (int i = 0; i < _cards.Count; i++)
+            _cards[i].TabIndex = i;
+    }
+
+    /// <summary>
+    /// Rebuilds _cards from SlotPanel.Children in visual top-to-bottom order.
     /// Call after ANY operation that modifies SlotPanel.Children (reorder, cancel,
     /// refresh) to guarantee _cards always matches what the user sees on screen.
     /// </summary>
     private void RebuildCardsFromPanel()
     {
-        var inOrder = SlotPanel.Children.OfType<SlotCard>().ToArray();
-        for (int i = 0; i < _cards.Length && i < inOrder.Length; i++)
-            _cards[i] = inOrder[i];
+        _cards.Clear();
+        _cards.AddRange(SlotPanel.Children.OfType<SlotCard>());
     }
+
+    // ── Positional navigation helpers ──────────────────────────────────────
+
+    /// <summary>
+    /// Returns all visible, focusable elements in top-to-bottom visual order:
+    /// first all SlotCards from SlotPanel, then visible footer buttons.
+    /// </summary>
+    private List<UIElement> GetFocusableElementsInOrder()
+    {
+        var elements = new List<UIElement>();
+        foreach (var card in _cards)
+            elements.Add(card);
+
+        if (RevertButton.Visibility == Visibility.Visible)
+            elements.Add(RevertButton);
+        elements.Add(ExitButton);
+
+        return elements;
+    }
+
+    /// <summary>Finds the index of <paramref name="element"/> in the focusable list, or -1.</summary>
+    private int GetFocusIndex(UIElement? element)
+    {
+        if (element is null) return -1;
+        var elements = GetFocusableElementsInOrder();
+        return elements.IndexOf(element);
+    }
+
+    /// <summary>Returns the currently focused card, or null if a button is focused.</summary>
+    private SlotCard? FocusedCard => _focusedElement as SlotCard;
+
+    /// <summary>Returns the index of the focused card in _cards, or -1.</summary>
+    private int FocusedCardIndex => FocusedCard is { } card ? _cards.IndexOf(card) : -1;
 
     private void ExitButton_Click(object sender, RoutedEventArgs e)
     {
@@ -247,13 +302,17 @@ public sealed partial class MainWindow : Window
             string exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName
                              ?? throw new InvalidOperationException("Cannot resolve process path");
             _reorderService.Initialize(exePath);
-            NavLog("[Forwarding] Initialized — identity map active");
+            NavLog($"[Forwarding] Initialized — identity map active, " +
+                  $"virtual slots: [{string.Join(",", _reorderService.VirtualSlotIndices)}]");
 
-            // Show the Revert All button on the UI thread
+            // Pass virtual slot indices to view model and show Revert All on the UI thread
             DispatcherQueue.TryEnqueue(() =>
             {
+                _viewModel.ExcludedSlotIndices = _reorderService.VirtualSlotIndices;
                 if (RevertButton is not null)
                     RevertButton.Visibility = Visibility.Visible;
+                // Re-enumerate now that we know which slots to exclude
+                _ = RefreshAsync();
             });
         }
         catch (Exception ex)
@@ -279,11 +338,13 @@ public sealed partial class MainWindow : Window
 
         // _cards[visualIndex] has SlotIndex from the ViewModel (the original physical slot).
         // We need: slotMap[physicalSlot] = virtualSlot (where virtualSlot = visual position).
-        var slotMap = new int[4];
-        for (int visualPos = 0; visualPos < 4; visualPos++)
+        // Start with identity map so any slots not in _cards (e.g. excluded virtual slots) pass through.
+        var slotMap = new int[] { 0, 1, 2, 3 };
+        for (int visualPos = 0; visualPos < _cards.Count; visualPos++)
         {
             int physicalSlot = _cards[visualPos].SlotIndex;
-            slotMap[physicalSlot] = visualPos;
+            if (physicalSlot >= 0 && physicalSlot < 4)
+                slotMap[physicalSlot] = visualPos;
         }
         _reorderService.ApplyOrder(slotMap);
         NavLog($"[Forwarding] Applied order: [{slotMap[0]},{slotMap[1]},{slotMap[2]},{slotMap[3]}]");
@@ -293,14 +354,11 @@ public sealed partial class MainWindow : Window
 
     private void NavTimer_Tick(object? sender, object e)
     {
-        // ALL state flags logged at the very top of every tick — before any early-return.
-        // This line goes to both Debug Output and the log file so post-mortem analysis
-        // can identify exactly which flag is stuck after a reorder cancel/confirm.
         NavLog($"NAV#{_navTickCount} windowActive={_windowActive} " +
-               $"focusIdx={_focusedCardIndex} reorderIdx={_reorderingIndex} " +
+               $"focused={_focusedElement?.GetType().Name ?? "null"} reorderIdx={_reorderingIndex} " +
                $"holdTick={_holdTickCount} aHoldStart={_aHoldStart.HasValue} " +
                $"aEnteredReorder={_aHoldEnteredReorder} suppress={_suppressFocusEvents} " +
-               $"savedOrderSet={_savedOrder.Any(c => c is not null)}");
+               $"cardCount={_cards.Count}");
         _navTickCount++;
 
         try
@@ -322,12 +380,10 @@ public sealed partial class MainWindow : Window
                 }
             }
 
-            // Edge-detect new presses and new releases vs previous frame.
             GamepadButtons newPresses  = current            & ~_prevGamepadButtons;
             GamepadButtons newReleases = _prevGamepadButtons & ~current;
             _prevGamepadButtons = current;
 
-            // Thumbstick threshold crossing (~25% of range).
             const short Threshold = 8192;
             bool stickUp   = maxThumbY >  Threshold && _prevLeftThumbY <=  Threshold;
             bool stickDown = maxThumbY < -Threshold && _prevLeftThumbY >= -Threshold;
@@ -337,7 +393,6 @@ public sealed partial class MainWindow : Window
             bool navDown      = (newPresses  & GamepadButtons.DPadDown)  != 0 || stickDown;
             bool pressB       = (newPresses  & GamepadButtons.B)         != 0;
             bool aJustPressed = (newPresses  & GamepadButtons.A)         != 0;
-            bool aHeld        = (current     & GamepadButtons.A)         != 0;
             bool aJustReleased= (newReleases & GamepadButtons.A)         != 0;
 
             // ── Phase 2: UI mutations ─────────────────────────────────────────────────
@@ -352,46 +407,55 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                // ── Normal mode: d-pad/stick moves focus ─────────────────────────────
-                if (navUp && _focusedCardIndex > 0)
+                // ── Normal mode: d-pad/stick moves focus through flat element list ───
+                var elements = GetFocusableElementsInOrder();
+                int curIdx = _focusedElement is not null ? elements.IndexOf(_focusedElement) : -1;
+
+                if (navUp && curIdx > 0)
                 {
-                    NavLog($"[NavTick] → Focus card {_focusedCardIndex - 1} (up)");
-                    _cards[_focusedCardIndex - 1].Focus(FocusState.Programmatic);
+                    NavLog($"[NavTick] → Focus element {curIdx - 1} (up)");
+                    elements[curIdx - 1].Focus(FocusState.Programmatic);
                 }
-                if (navDown && _focusedCardIndex >= 0 && _focusedCardIndex < _cards.Length - 1)
+                if (navDown && curIdx < elements.Count - 1)
                 {
-                    NavLog($"[NavTick] → Focus card {_focusedCardIndex + 1} (down)");
-                    _cards[_focusedCardIndex + 1].Focus(FocusState.Programmatic);
+                    int nextIdx = curIdx < 0 ? 0 : curIdx + 1;
+                    NavLog($"[NavTick] → Focus element {nextIdx} (down)");
+                    elements[nextIdx].Focus(FocusState.Programmatic);
                 }
 
-                // ── A button: tap (<500ms) = rumble; hold (≥500ms) = reorder ────────
-                // Progress animation is owned by _holdTimer (HoldTimer_Tick).
-                // NavTimer_Tick only handles press start and release.
+                // ── A button on cards: tap = rumble, hold = reorder ──────────────────
+                // On buttons: tap = activate
+                int cardIdx = FocusedCardIndex;
 
-                if (aJustPressed && _focusedCardIndex >= 0)
+                if (aJustPressed && _focusedElement is not null)
                 {
-                    // Cancel any previous hold (e.g. rapid double-press) then start fresh.
-                    _holdTimer.Stop();
-                    _cards[_focusedCardIndex].StopHoldRumble(); // defensive: clear any stale hold rumble
-                    _aHoldStart          = DateTime.UtcNow;
-                    _aHoldEnteredReorder = false;
-                    _holdTimer.Start();
-                    NavLog($"[NavTick] A pressed on card {_focusedCardIndex} — " +
-                           $"holdTimer hashCode=0x{_holdTimer.GetHashCode():X}");
+                    if (cardIdx >= 0)
+                    {
+                        _holdTimer.Stop();
+                        _cards[cardIdx].StopHoldRumble();
+                        _aHoldStart          = DateTime.UtcNow;
+                        _aHoldEnteredReorder = false;
+                        _holdTimer.Start();
+                        NavLog($"[NavTick] A pressed on card {cardIdx}");
+                    }
+                    else if (_focusedElement is Button btn)
+                    {
+                        // A on a button = activate it
+                        NavLog($"[NavTick] A pressed on button '{btn.Content}'");
+                        ActivateButton(btn);
+                    }
                 }
 
                 if (aJustReleased)
                 {
                     _holdTimer.Stop();
                     _holdTickCount = 0;
-                    if (_aHoldStart.HasValue && !_aHoldEnteredReorder && _focusedCardIndex >= 0)
+                    if (_aHoldStart.HasValue && !_aHoldEnteredReorder && cardIdx >= 0)
                     {
-                        // Tap (released before 500ms) — stop progressive rumble, then
-                        // fire the normal 200ms identify rumble.
                         NavLog("[NavTick] → TriggerRumble (tap <500ms)");
-                        _cards[_focusedCardIndex].StopHoldRumble();
-                        _cards[_focusedCardIndex].HideHoldProgress();
-                        _cards[_focusedCardIndex].TriggerRumble();
+                        _cards[cardIdx].StopHoldRumble();
+                        _cards[cardIdx].HideHoldProgress();
+                        _cards[cardIdx].TriggerRumble();
                     }
                     _aHoldStart          = null;
                     _aHoldEnteredReorder = false;
@@ -402,6 +466,13 @@ public sealed partial class MainWindow : Window
         {
             NavLog($"[NavTimer_Tick ERROR] {ex}");
         }
+    }
+
+    /// <summary>Programmatically activates a footer button (simulates click).</summary>
+    private void ActivateButton(Button btn)
+    {
+        if (btn == RevertButton) RevertButton_Click(btn, new RoutedEventArgs());
+        else if (btn == ExitButton) ExitButton_Click(btn, new RoutedEventArgs());
     }
 
     private void WatchdogTimer_Tick(object? sender, object e)
@@ -433,12 +504,12 @@ public sealed partial class MainWindow : Window
         try
         {
             _holdTickCount++;
+            var card = FocusedCard;
+            int cardIdx = card is not null ? _cards.IndexOf(card) : -1;
 
-            if (_aHoldStart is null || _focusedCardIndex < 0)
+            if (_aHoldStart is null || card is null || cardIdx < 0)
             {
-                // Guard: shouldn't happen, but stop cleanly if state is inconsistent.
-                if (_focusedCardIndex >= 0)
-                    _cards[_focusedCardIndex].StopHoldRumble();
+                card?.StopHoldRumble();
                 _holdTimer.Stop();
                 _holdTickCount = 0;
                 return;
@@ -446,21 +517,18 @@ public sealed partial class MainWindow : Window
 
             double elapsedMs = (DateTime.UtcNow - _aHoldStart.Value).TotalMilliseconds;
 
-            // Progressive rumble: linear ramp from 10% (6553) at 0ms to 40% (26214) at 500ms.
-            // Formula: intensity = 6553 + 19661 * clamp(t, 0, 1) where t = elapsedMs / 500
             var rumbleIntensity = (ushort)(6553 + 19661 * Math.Clamp(elapsedMs / 500.0, 0.0, 1.0));
-            _cards[_focusedCardIndex].SetHoldRumble(rumbleIntensity);
+            card.SetHoldRumble(rumbleIntensity);
 
-            // Show progress bar only after 200ms delay; map [200ms, 500ms] → [0, 1].
             if (elapsedMs >= 200.0)
-                _cards[_focusedCardIndex].ShowHoldProgress((elapsedMs - 200.0) / 300.0);
+                card.ShowHoldProgress((elapsedMs - 200.0) / 300.0);
 
             if (elapsedMs >= 500.0 && !_aHoldEnteredReorder)
             {
                 _aHoldEnteredReorder = true;
                 _holdTimer.Stop();
-                _cards[_focusedCardIndex].HideHoldProgress();
-                _cards[_focusedCardIndex].StopHoldRumble(); // stop progressive rumble before reorder mode
+                card.HideHoldProgress();
+                card.StopHoldRumble();
                 NavLog("[HoldTimer] → StartReorder (hold ≥500ms)");
                 StartReorder();
             }
@@ -501,7 +569,6 @@ public sealed partial class MainWindow : Window
                     break;
                 case VirtualKey.Enter:
                 case VirtualKey.Space:
-                    // Keyboard confirm: immediate. GamepadA is handled via XInput hold detection.
                     NavLog("[KeyDown] ConfirmReorder (keyboard)");
                     ConfirmReorder();
                     e.Handled = true;
@@ -520,10 +587,9 @@ public sealed partial class MainWindow : Window
             {
                 case VirtualKey.Enter:
                 case VirtualKey.Space:
-                    // Keyboard reorder: immediate. GamepadA uses XInput hold detection (tap=rumble, hold=reorder).
-                    if (_focusedCardIndex >= 0)
+                    if (FocusedCardIndex >= 0)
                     {
-                        NavLog($"[KeyDown] StartReorder (keyboard) on card {_focusedCardIndex}");
+                        NavLog($"[KeyDown] StartReorder (keyboard) on card {FocusedCardIndex}");
                         StartReorder();
                         e.Handled = true;
                     }
@@ -531,21 +597,17 @@ public sealed partial class MainWindow : Window
 
                 case VirtualKey.Tab:
                 {
-                    // Manual Tab handling — WinUI's Tab event may or may not fire here,
-                    // but TabIndex provides a reliable fallback if it doesn't.
-                    // When it does fire: move focus explicitly so _focusedCardIndex stays in sync.
-                    if (_focusedCardIndex >= 0)
+                    var elements = GetFocusableElementsInOrder();
+                    int curIdx = _focusedElement is not null ? elements.IndexOf(_focusedElement) : -1;
+                    var shiftState = Microsoft.UI.Input.InputKeyboardSource
+                        .GetKeyStateForCurrentThread(VirtualKey.Shift);
+                    bool shiftDown = (shiftState & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+                    int next = shiftDown ? curIdx - 1 : curIdx + 1;
+                    if (next >= 0 && next < elements.Count)
                     {
-                        var shiftState = Microsoft.UI.Input.InputKeyboardSource
-                            .GetKeyStateForCurrentThread(VirtualKey.Shift);
-                        bool shiftDown = (shiftState & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
-                        int  next      = shiftDown ? _focusedCardIndex - 1 : _focusedCardIndex + 1;
-                        if (next >= 0 && next < _cards.Length)
-                        {
-                            NavLog($"[KeyDown] Tab({(shiftDown ? "↑" : "↓")}) → focus card {next}");
-                            _cards[next].Focus(FocusState.Programmatic);
-                            e.Handled = true;
-                        }
+                        NavLog($"[KeyDown] Tab({(shiftDown ? "up" : "down")}) → element {next}");
+                        elements[next].Focus(FocusState.Programmatic);
+                        e.Handled = true;
                     }
                     break;
                 }
@@ -555,33 +617,33 @@ public sealed partial class MainWindow : Window
 
     // ── Navigation: focus tracking ────────────────────────────────────────────
 
-    private void OnCardGotFocus(int idx)
+    private void OnElementGotFocus(UIElement element)
     {
-        // Suppressed during CancelReorder / ConfirmReorder — state is managed explicitly there.
         if (_suppressFocusEvents) return;
 
-        // If the user moved focus mid-hold, cancel the pending hold on the old card.
-        if (_aHoldStart.HasValue && _focusedCardIndex >= 0 && _focusedCardIndex != idx)
+        // If focus moved mid-hold, cancel the pending hold on the old card.
+        if (_aHoldStart.HasValue && FocusedCard is { } oldCard && !ReferenceEquals(oldCard, element))
         {
             _holdTimer.Stop();
-            _cards[_focusedCardIndex].HideHoldProgress();
-            _cards[_focusedCardIndex].StopHoldRumble(); // stop progressive rumble on card losing focus
+            oldCard.HideHoldProgress();
+            oldCard.StopHoldRumble();
             _aHoldStart          = null;
             _aHoldEnteredReorder = false;
         }
-        _focusedCardIndex = idx;
+        _focusedElement = element;
         UpdateCardStates();
+        UpdateButtonFocusVisuals();
     }
 
-    private void OnCardLostFocus(int idx)
+    private void OnElementLostFocus(UIElement element)
     {
-        // Suppressed during CancelReorder / ConfirmReorder — state is managed explicitly there.
         if (_suppressFocusEvents) return;
 
-        if (_focusedCardIndex == idx && _reorderingIndex < 0)
+        if (ReferenceEquals(_focusedElement, element) && _reorderingIndex < 0)
         {
-            _focusedCardIndex = -1;
+            _focusedElement = null;
             UpdateCardStates();
+            UpdateButtonFocusVisuals();
         }
     }
 
@@ -589,10 +651,12 @@ public sealed partial class MainWindow : Window
 
     private void StartReorder()
     {
-        if (_focusedCardIndex < 0) return;
-        NavLog($"[StartReorder] card {_focusedCardIndex}");
-        _reorderingIndex = _focusedCardIndex;
-        Array.Copy(_cards, _savedOrder, _cards.Length);
+        int cardIdx = FocusedCardIndex;
+        if (cardIdx < 0) return;
+        NavLog($"[StartReorder] card {cardIdx}");
+        _reorderingIndex = cardIdx;
+        _savedOrder.Clear();
+        _savedOrder.AddRange(_cards);
         UpdateCardStates();
     }
 
@@ -600,7 +664,8 @@ public sealed partial class MainWindow : Window
     {
         if (_reorderingIndex < 0) return;
         int confirmIdx = _reorderingIndex;
-        NavLog($"[ConfirmReorder] confirmIdx={confirmIdx} focusIdx={_focusedCardIndex}");
+        var confirmCard = _cards[confirmIdx];
+        NavLog($"[ConfirmReorder] confirmIdx={confirmIdx}");
 
         _suppressFocusEvents = true;
         try
@@ -609,157 +674,123 @@ public sealed partial class MainWindow : Window
             _holdTickCount       = 0;
             _aHoldStart          = null;
             _aHoldEnteredReorder = false;
-            _focusedCardIndex    = confirmIdx;
+            _focusedElement      = confirmCard;
             _reorderingIndex     = -1;
 
             UpdateCardStates();
-            _cards[_focusedCardIndex].Focus(FocusState.Programmatic);
+            confirmCard.Focus(FocusState.Programmatic);
         }
         finally
         {
             _suppressFocusEvents = false;
         }
 
-        // Sync drift check — deferred LostFocus from MoveReorderingCard (RemoveAt/Insert)
-        // can have fired synchronously during Focus() above.
-        if (_focusedCardIndex != confirmIdx)
+        // Sync drift check
+        if (!ReferenceEquals(_focusedElement, confirmCard))
         {
-            NavLog($"[ConfirmReorder] sync drift {_focusedCardIndex}→{confirmIdx} — correcting");
-            _focusedCardIndex = confirmIdx;
+            NavLog("[ConfirmReorder] sync drift — correcting");
+            _focusedElement = confirmCard;
             UpdateCardStates();
         }
 
-        // Deferred guard — MoveReorderingCard's Children.RemoveAt/Insert can post deferred
-        // LostFocus events that fire after this method returns.  Same queue-ordering
-        // guarantee as CancelReorder: we enqueue AFTER those events were posted, so
-        // we run last and re-assert the correct _focusedCardIndex.
-        int guardIdx = confirmIdx;
+        // Deferred guard
         Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
         {
-            if (_reorderingIndex < 0 && _focusedCardIndex != guardIdx)
+            if (_reorderingIndex < 0 && !ReferenceEquals(_focusedElement, confirmCard))
             {
-                NavLog($"[ConfirmReorder deferred guard] focusIdx={_focusedCardIndex} expected={guardIdx} — correcting");
-                _focusedCardIndex = guardIdx;
+                NavLog("[ConfirmReorder deferred guard] — correcting");
+                _focusedElement = confirmCard;
                 UpdateCardStates();
             }
         });
 
-        NavLog($"[ConfirmReorder] done — focusIdx={_focusedCardIndex} reorderIdx={_reorderingIndex}");
+        NavLog($"[ConfirmReorder] done — reorderIdx={_reorderingIndex}");
 
-        // Apply the new visual order to the forwarding stack
         ApplyCurrentOrderToForwarding();
     }
 
     private void CancelReorder()
     {
         if (_reorderingIndex < 0) return;
-        NavLog($"[CancelReorder] reorderIdx={_reorderingIndex} focusIdx={_focusedCardIndex}");
+        NavLog($"[CancelReorder] reorderIdx={_reorderingIndex}");
 
-        // Capture the card being moved BY REFERENCE before we restore _cards[] from
-        // _savedOrder — the index may point to a different card after the copy.
         var focusCard = _cards[_reorderingIndex];
 
-        // Suppress BEFORE any tree modification.
-        // Children.Clear() posts deferred LostFocus events to the WinUI dispatcher
-        // queue; those events fire in a subsequent dispatcher cycle AFTER this method
-        // returns and AFTER suppress is cleared by the finally block.  If suppress is
-        // not set here, the first tree-removal LostFocus fires unsuppressed and calls
-        // OnCardLostFocus with _reorderingIndex already -1, setting _focusedCardIndex
-        // to -1 and permanently breaking d-pad navigation.  Setting suppress first
-        // makes any synchronous LostFocus (same-tick) a no-op; the DispatcherQueue
-        // guard below handles the deferred (next-tick) case.
         _suppressFocusEvents = true;
         try
         {
             SlotPanel.Children.Clear();
-            Array.Copy(_savedOrder, _cards, _cards.Length);
+            _cards.Clear();
+            _cards.AddRange(_savedOrder);
             foreach (var card in _cards)
                 SlotPanel.Children.Add(card);
 
-            // Rebuild _cards from panel and fix TabIndex — single source of truth.
             RebuildCardsFromPanel();
-            for (int i = 0; i < _cards.Length; i++)
+            for (int i = 0; i < _cards.Count; i++)
                 _cards[i].TabIndex = i;
-
-            int restoreIdx = Array.IndexOf(_cards, focusCard);
-            if (restoreIdx < 0) restoreIdx = 0;
 
             _holdTimer.Stop();
             _holdTickCount       = 0;
             _aHoldStart          = null;
             _aHoldEnteredReorder = false;
-            _focusedCardIndex    = restoreIdx;
+            _focusedElement      = focusCard;
             _reorderingIndex     = -1;
 
             UpdateCardStates();
-            _cards[restoreIdx].Focus(FocusState.Programmatic);
+            focusCard.Focus(FocusState.Programmatic);
         }
         finally
         {
             _suppressFocusEvents = false;
         }
 
-        // Sync drift check — catches events that fired synchronously within the try block.
-        int expectedIdx = Array.IndexOf(_cards, focusCard);
-        if (expectedIdx < 0) expectedIdx = 0;
-        if (_focusedCardIndex != expectedIdx)
+        // Sync drift check
+        if (!ReferenceEquals(_focusedElement, focusCard))
         {
-            NavLog($"[CancelReorder] sync drift {_focusedCardIndex}→{expectedIdx} — correcting");
-            _focusedCardIndex = expectedIdx;
+            NavLog("[CancelReorder] sync drift — correcting");
+            _focusedElement = focusCard;
             UpdateCardStates();
         }
 
-        // Deferred guard — runs AFTER any pending deferred LostFocus events from
-        // Children.Clear().  Those events are posted to the dispatcher queue during
-        // Clear() and fire in the next dispatcher cycle (after this method and its
-        // caller have already returned), where _suppressFocusEvents is already false
-        // and _reorderingIndex is already -1, causing OnCardLostFocus to clobber
-        // _focusedCardIndex.  Because we enqueue THIS callback AFTER Clear() posted
-        // its event, the dispatcher FIFO ordering guarantees we run LAST and can
-        // re-assert the correct value.
-        int guardIdx = expectedIdx;
+        // Deferred guard
         Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
         {
-            if (_reorderingIndex < 0 && _focusedCardIndex != guardIdx)
+            if (_reorderingIndex < 0 && !ReferenceEquals(_focusedElement, focusCard))
             {
-                NavLog($"[CancelReorder deferred guard] focusIdx={_focusedCardIndex} expected={guardIdx} — correcting");
-                _focusedCardIndex = guardIdx;
+                NavLog("[CancelReorder deferred guard] — correcting");
+                _focusedElement = focusCard;
                 UpdateCardStates();
             }
         });
 
-        NavLog($"[CancelReorder] done — focusIdx={_focusedCardIndex} reorderIdx={_reorderingIndex}");
+        NavLog($"[CancelReorder] done — reorderIdx={_reorderingIndex}");
     }
 
     private void MoveReorderingCard(int direction)
     {
         if (_reorderingIndex < 0) return;
         int newIdx = _reorderingIndex + direction;
-        if (newIdx < 0 || newIdx >= _cards.Length) return;
+        if (newIdx < 0 || newIdx >= _cards.Count) return;
 
         NavLog($"[MoveReorderingCard] {_reorderingIndex} → {newIdx}");
 
         var movingCard = _cards[_reorderingIndex];
 
-        // Suppress focus events for the duration of the tree modification.
-        // Children.RemoveAt can post deferred LostFocus — suppressing prevents
-        // those events from corrupting _focusedCardIndex / _reorderingIndex.
         _suppressFocusEvents = true;
         try
         {
             SlotPanel.Children.RemoveAt(_reorderingIndex);
             SlotPanel.Children.Insert(newIdx, movingCard);
 
-            // Always derive _cards order from the panel — single source of truth.
             RebuildCardsFromPanel();
 
-            for (int i = 0; i < _cards.Length; i++)
+            for (int i = 0; i < _cards.Count; i++)
                 _cards[i].TabIndex = i;
 
             _reorderingIndex = newIdx;
+            _focusedElement  = movingCard;
             UpdateCardStates();
-            // Re-focus the moved card so keyboard focus stays on it during reorder.
-            _cards[_reorderingIndex].Focus(FocusState.Programmatic);
+            movingCard.Focus(FocusState.Programmatic);
         }
         finally
         {
@@ -773,16 +804,34 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCardStates()
     {
-        for (int i = 0; i < _cards.Length; i++)
+        int focusedIdx = FocusedCardIndex;
+        for (int i = 0; i < _cards.Count; i++)
         {
             CardState state;
             if (_reorderingIndex >= 0)
                 state = i == _reorderingIndex ? CardState.Selected : CardState.Dimmed;
             else
-                state = i == _focusedCardIndex ? CardState.Focused : CardState.Normal;
+                state = i == focusedIdx ? CardState.Focused : CardState.Normal;
 
             _cards[i].SetCardState(state);
         }
+    }
+
+    /// <summary>
+    /// Applies a white focus ring to footer buttons when they have gamepad/keyboard focus.
+    /// </summary>
+    private void UpdateButtonFocusVisuals()
+    {
+        ApplyButtonFocusVisual(RevertButton, ReferenceEquals(_focusedElement, RevertButton));
+        ApplyButtonFocusVisual(ExitButton, ReferenceEquals(_focusedElement, ExitButton));
+    }
+
+    private static void ApplyButtonFocusVisual(Button btn, bool focused)
+    {
+        btn.BorderThickness = focused ? new Thickness(2) : new Thickness(0);
+        btn.BorderBrush     = focused
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255))
+            : null;
     }
 
     // DECISION: XYFocus (WinUI's built-in D-pad navigation via XYFocusUp/Down) is

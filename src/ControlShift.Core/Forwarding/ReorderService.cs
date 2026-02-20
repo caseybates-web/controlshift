@@ -18,6 +18,10 @@ public sealed class ReorderService : IReorderService
 
     public bool IsActive => _forwarding?.IsRunning ?? false;
 
+    /// <inheritdoc />
+    public IReadOnlySet<int> VirtualSlotIndices =>
+        _pool?.VirtualSlotIndices ?? (IReadOnlySet<int>)new HashSet<int>();
+
     /// <summary>
     /// Initializes the forwarding stack: hides physical controllers, creates virtual ones,
     /// and starts forwarding with the given slot map.
@@ -50,9 +54,6 @@ public sealed class ReorderService : IReorderService
         // 2. Create virtual controllers — they get slots 0–3 now that physical are hidden
         _pool = new ViGEmControllerPool();
         _pool.Connect();
-
-        // Small delay for Windows to propagate slot assignments
-        Thread.Sleep(200);
 
         // 3. Start forwarding with identity map
         _forwarding = new InputForwardingService(_pool);

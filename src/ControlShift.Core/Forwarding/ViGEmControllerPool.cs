@@ -1,6 +1,7 @@
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
+using Vortice.XInput;
 
 namespace ControlShift.Core.Forwarding;
 
@@ -13,6 +14,7 @@ public sealed class ViGEmControllerPool : IDisposable
 {
     private readonly ViGEmClient _client;
     private readonly IXbox360Controller[] _controllers = new IXbox360Controller[4];
+    private readonly HashSet<int> _virtualSlotIndices = new();
     private bool _connected;
     private bool _disposed;
 
@@ -23,12 +25,20 @@ public sealed class ViGEmControllerPool : IDisposable
 
     /// <summary>
     /// Creates and connects 4 virtual Xbox 360 controllers.
-    /// Windows assigns XInput slots 0–3 in connection order.
-    /// Call this AFTER hiding physical controllers via HidHide so virtual controllers get slots 0–3.
+    /// Diffs XInput slots before/after to detect which indices Windows assigned to virtual controllers.
+    /// Call AFTER hiding physical controllers via HidHide.
     /// </summary>
     public void Connect()
     {
         if (_connected) return;
+
+        // Snapshot which XInput slots are occupied BEFORE connecting virtual controllers
+        var preSlots = new HashSet<int>();
+        for (uint i = 0; i < 4; i++)
+        {
+            if (XInput.GetState(i, out _))
+                preSlots.Add((int)i);
+        }
 
         for (int i = 0; i < 4; i++)
         {
@@ -39,6 +49,17 @@ public sealed class ViGEmControllerPool : IDisposable
         }
 
         _connected = true;
+
+        // Let Windows propagate slot assignments
+        Thread.Sleep(300);
+
+        // Diff: new slots that appeared after connecting are virtual
+        _virtualSlotIndices.Clear();
+        for (uint i = 0; i < 4; i++)
+        {
+            if (!preSlots.Contains((int)i) && XInput.GetState(i, out _))
+                _virtualSlotIndices.Add((int)i);
+        }
     }
 
     /// <summary>Gets the virtual controller at the given index (0–3).</summary>
@@ -46,6 +67,12 @@ public sealed class ViGEmControllerPool : IDisposable
 
     /// <summary>True if all 4 controllers are connected.</summary>
     public bool IsConnected => _connected;
+
+    /// <summary>
+    /// XInput slot indices that were assigned to virtual controllers (detected via before/after diff).
+    /// These slots should be hidden from the UI.
+    /// </summary>
+    public IReadOnlySet<int> VirtualSlotIndices => _virtualSlotIndices;
 
     /// <summary>
     /// Forwards XInput gamepad state to the specified virtual controller and submits the report.
