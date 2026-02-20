@@ -12,13 +12,15 @@ jobs:
   release:
     runs-on: windows-latest
 
+    env:
+      VERSION: ''
+
     steps:
     - uses: actions/checkout@v4
 
     - name: Extract version from tag
-      id: version
       shell: bash
-      run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
@@ -42,47 +44,24 @@ jobs:
         curl -L -o src/ControlShift.Bundle/drivers/HidHide_1.5.230_x64.exe \
           https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe
 
-    # Build the WinUI 3 app (self-contained x64).
-    - name: Restore App
+    # Build everything in one MSBuild call so inter-project references
+    # (including WiX $(var.ProjectName.TargetPath) variables) resolve correctly.
+    - name: Build solution
       run: >
-        msbuild src/ControlShift.App/ControlShift.App.csproj
-        /t:Restore
-        /p:Configuration=Release
-        /p:Platform=x64
-        /p:RuntimeIdentifier=win-x64
+        msbuild ControlShift.sln
+        -p:Configuration=Release
+        -p:Platform=x64
+        -p:ProductVersion=${{ env.VERSION }}
+        -restore
 
-    - name: Build App
-      run: >
-        msbuild src/ControlShift.App/ControlShift.App.csproj
-        /p:Configuration=Release
-        /p:Platform=x64
-        /p:RuntimeIdentifier=win-x64
-        /p:SelfContained=true
-
-    # Build the WiX MSI (harvests files from the app build output).
-    - name: Build MSI
-      run: >
-        msbuild src/ControlShift.Installer/ControlShift.Installer.wixproj
-        /p:Configuration=Release
-        /p:ProductVersion=${{ steps.version.outputs.VERSION }}
-
-    # Build the WiX Burn bundle (chains drivers + MSI).
-    - name: Build Bundle
-      run: >
-        msbuild src/ControlShift.Bundle/ControlShift.Bundle.wixproj
-        /p:Configuration=Release
-        /p:ProductVersion=${{ steps.version.outputs.VERSION }}
-
-    # Locate the bundle exe and rename for release.
     - name: Prepare release asset
       shell: bash
       run: |
-        BUNDLE_EXE=$(find src/ControlShift.Bundle/bin -name "ControlShift.Bundle.exe" -type f | head -1)
-        echo "Found bundle at: $BUNDLE_EXE"
-        cp "$BUNDLE_EXE" "ControlShift-Setup-${{ steps.version.outputs.VERSION }}.exe"
+        cp "src/ControlShift.Bundle/bin/x64/Release/ControlShift.Bundle.exe" \
+           "ControlShift-Setup-${{ env.VERSION }}.exe"
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        files: ControlShift-Setup-${{ steps.version.outputs.VERSION }}.exe
+        files: ControlShift-Setup-${{ env.VERSION }}.exe
         generate_release_notes: true
