@@ -63,20 +63,22 @@ public sealed class ControllerMatcher : IControllerMatcher
             Debug.WriteLine($"  Slot{slot.SlotIndex}: connected — searching for '{igMarker}' " +
                             $"in {hidDevices.Count} HID devices");
 
-            HidDeviceInfo?       hid = null;
-            FingerprintedDevice? fp  = null;
+            HidDeviceInfo?       hid    = null;
+            FingerprintedDevice? fp     = null;
+            int                  hidIdx = -1;
 
-            foreach (var h in hidDevices)
+            for (int d = 0; d < hidDevices.Count; d++)
             {
+                var h = hidDevices[d];
                 if (h.DevicePath.IndexOf(igMarker, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    hid = h;
-                    fp  = fingerprinted.FirstOrDefault(f => f.Device.DevicePath == h.DevicePath);
+                    hid    = h;
+                    hidIdx = d;
+                    fp     = fingerprinted.FirstOrDefault(f => f.Device.DevicePath == h.DevicePath);
                     var ct = DetectHidConnectionType(h.DevicePath);
-                    Debug.WriteLine($"  Slot{slot.SlotIndex}: MATCH VID={h.Vid} PID={h.Pid} " +
-                                    $"name='{h.ProductName}' connType={ct} " +
-                                    $"knownName='{fp?.KnownDeviceName ?? "(none)"}' " +
-                                    $"integrated={fp?.IsIntegratedGamepad ?? false}");
+                    Debug.WriteLine($"  Slot{slot.SlotIndex}: MATCH hidIndex={d} VID={h.Vid} PID={h.Pid} " +
+                                    $"name='{h.ProductName}' connType={ct}");
+                    Debug.WriteLine($"    path={h.DevicePath}");
                     break;
                 }
             }

@@ -31,12 +31,61 @@ public sealed class MainViewModel
     /// </summary>
     public async Task RefreshAsync()
     {
+        IReadOnlyList<HidDeviceInfo> hidDevices = Array.Empty<HidDeviceInfo>();
+
         var matched = await Task.Run(() =>
         {
             var xinputSlots = _xinput.GetSlots();
-            var hidDevices  = _hid.GetDevices();
+            hidDevices      = _hid.GetDevices();
             return _matcher.Match(xinputSlots, hidDevices);
         });
+
+        // ── HID diagnostic path dump ───────────────────────────────────────────
+        // Writes every raw HID device path (no filtering) to a temp file so
+        // Bluetooth detection issues can be diagnosed without guessing.
+        try
+        {
+            var dumpPath = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), "controlshift-hid-dump.txt");
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"ControlShift HID dump — {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+            sb.AppendLine($"{hidDevices.Count} HID device(s) enumerated:");
+            sb.AppendLine();
+            for (int d = 0; d < hidDevices.Count; d++)
+            {
+                var h = hidDevices[d];
+                sb.AppendLine($"[{d}] VID={h.Vid}  PID={h.Pid}  name='{h.ProductName ?? "(null)"}'");
+                sb.AppendLine($"     {h.DevicePath}");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("=== MATCH RESULTS ===");
+            sb.AppendLine();
+            foreach (var mc in matched)
+            {
+                if (!mc.IsConnected)
+                {
+                    sb.AppendLine($"Slot {mc.SlotIndex}: disconnected");
+                    continue;
+                }
+
+                // Find which index in hidDevices this match came from.
+                int hidIdx = -1;
+                if (mc.Hid is not null)
+                    for (int d = 0; d < hidDevices.Count; d++)
+                        if (string.Equals(hidDevices[d].DevicePath, mc.Hid.DevicePath,
+                                          StringComparison.OrdinalIgnoreCase))
+                        { hidIdx = d; break; }
+
+                sb.AppendLine($"Slot {mc.SlotIndex}: hidIndex={hidIdx}  VID={mc.Hid?.Vid ?? "(none)"}  PID={mc.Hid?.Pid ?? "(none)"}  hidConn={mc.HidConnectionType}  xinputConn={mc.XInputConnectionType}");
+                if (mc.Hid is not null)
+                    sb.AppendLine($"         path={mc.Hid.DevicePath}");
+                sb.AppendLine();
+            }
+
+            System.IO.File.WriteAllText(dumpPath, sb.ToString());
+        }
+        catch { /* diagnostic writes must never throw */ }
 
         // Build VMs from matched data.
         var vms = new List<SlotViewModel>(matched.Count);
