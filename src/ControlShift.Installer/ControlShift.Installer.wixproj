@@ -19,9 +19,11 @@
   <ItemGroup>
     <HarvestDirectory Include="$(HarvestPath)">
       <ComponentGroupName>AppFiles</ComponentGroupName>
-      <DirectoryRef>INSTALLFOLDER</DirectoryRef>
+      <DirectoryRefId>INSTALLFOLDER</DirectoryRefId>
       <SuppressRootDirectory>true</SuppressRootDirectory>
+      <SuppressRegistry>true</SuppressRegistry>
     </HarvestDirectory>
+    <BindPath Include="$(HarvestPath)" />
   </ItemGroup>
 
 </Project>
