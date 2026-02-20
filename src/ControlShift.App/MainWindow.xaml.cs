@@ -283,6 +283,7 @@ public sealed partial class MainWindow : Window
                 {
                     // Cancel any previous hold (e.g. rapid double-press) then start fresh.
                     _holdTimer.Stop();
+                    _cards[_focusedCardIndex].StopHoldRumble(); // defensive: clear any stale hold rumble
                     _aHoldStart          = DateTime.UtcNow;
                     _aHoldEnteredReorder = false;
                     _holdTimer.Start();
@@ -296,8 +297,10 @@ public sealed partial class MainWindow : Window
                     _holdTickCount = 0;
                     if (_aHoldStart.HasValue && !_aHoldEnteredReorder && _focusedCardIndex >= 0)
                     {
-                        // Tap (released before 500ms) — rumble to identify, no reorder.
+                        // Tap (released before 500ms) — stop progressive rumble, then
+                        // fire the normal 200ms identify rumble.
                         NavLog("[NavTick] → TriggerRumble (tap <500ms)");
+                        _cards[_focusedCardIndex].StopHoldRumble();
                         _cards[_focusedCardIndex].HideHoldProgress();
                         _cards[_focusedCardIndex].TriggerRumble();
                     }
@@ -345,6 +348,8 @@ public sealed partial class MainWindow : Window
             if (_aHoldStart is null || _focusedCardIndex < 0)
             {
                 // Guard: shouldn't happen, but stop cleanly if state is inconsistent.
+                if (_focusedCardIndex >= 0)
+                    _cards[_focusedCardIndex].StopHoldRumble();
                 _holdTimer.Stop();
                 _holdTickCount = 0;
                 return;
@@ -352,7 +357,12 @@ public sealed partial class MainWindow : Window
 
             double elapsedMs = (DateTime.UtcNow - _aHoldStart.Value).TotalMilliseconds;
 
-            // Show progress only after 200ms delay; map [200ms, 500ms] → [0, 1].
+            // Progressive rumble: linear ramp from 10% (6553) at 0ms to 40% (26214) at 500ms.
+            // Formula: intensity = 6553 + 19661 * clamp(t, 0, 1) where t = elapsedMs / 500
+            var rumbleIntensity = (ushort)(6553 + 19661 * Math.Clamp(elapsedMs / 500.0, 0.0, 1.0));
+            _cards[_focusedCardIndex].SetHoldRumble(rumbleIntensity);
+
+            // Show progress bar only after 200ms delay; map [200ms, 500ms] → [0, 1].
             if (elapsedMs >= 200.0)
                 _cards[_focusedCardIndex].ShowHoldProgress((elapsedMs - 200.0) / 300.0);
 
@@ -361,6 +371,7 @@ public sealed partial class MainWindow : Window
                 _aHoldEnteredReorder = true;
                 _holdTimer.Stop();
                 _cards[_focusedCardIndex].HideHoldProgress();
+                _cards[_focusedCardIndex].StopHoldRumble(); // stop progressive rumble before reorder mode
                 NavLog("[HoldTimer] → StartReorder (hold ≥500ms)");
                 StartReorder();
             }
@@ -444,6 +455,7 @@ public sealed partial class MainWindow : Window
         {
             _holdTimer.Stop();
             _cards[_focusedCardIndex].HideHoldProgress();
+            _cards[_focusedCardIndex].StopHoldRumble(); // stop progressive rumble on card losing focus
             _aHoldStart          = null;
             _aHoldEnteredReorder = false;
         }
@@ -480,8 +492,9 @@ public sealed partial class MainWindow : Window
         int confirmIdx = _reorderingIndex;
         NavLog($"[ConfirmReorder] confirmIdx={confirmIdx} focusIdx={_focusedCardIndex}");
 
-        // Rebuild XY focus links for the new card order before releasing focus suppression.
-        UpdateXYFocusLinks();
+        // Enqueue XY focus update — deferred so WinUI completes layout after tree mutations
+        // from MoveReorderingCard before we set the links.
+        EnqueueXYFocusUpdate();
 
         _suppressFocusEvents = true;
         try
@@ -554,7 +567,7 @@ public sealed partial class MainWindow : Window
             Array.Copy(_savedOrder, _cards, _cards.Length);
             foreach (var card in _cards)
                 SlotPanel.Children.Add(card);
-            UpdateXYFocusLinks();
+            EnqueueXYFocusUpdate();
 
             int restoreIdx = Array.IndexOf(_cards, focusCard);
             if (restoreIdx < 0) restoreIdx = 0;
@@ -625,10 +638,11 @@ public sealed partial class MainWindow : Window
 
         (_cards[_reorderingIndex], _cards[newIdx]) = (_cards[newIdx], _cards[_reorderingIndex]);
 
-        // All cards are back in the tree — rebuild TabIndex and XYFocus.
+        // All cards are back in the tree — rebuild TabIndex and enqueue XYFocus update.
+        // Deferred so WinUI completes its layout pass before we set the links.
         for (int i = 0; i < _cards.Length; i++)
             _cards[i].TabIndex = i;
-        UpdateXYFocusLinks();
+        EnqueueXYFocusUpdate();
 
         _reorderingIndex = newIdx;
         UpdateCardStates();
@@ -668,6 +682,7 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Sets XYFocusUp/Down so WinUI's built-in D-pad focus navigation chains through
     /// the cards top-to-bottom. Only call after all cards are in the visual tree.
+    /// Logs each card's link targets for post-mortem analysis.
     /// </summary>
     private void UpdateXYFocusLinks()
     {
@@ -678,11 +693,36 @@ public sealed partial class MainWindow : Window
                 _cards[i].XYFocusUp   = i > 0                ? _cards[i - 1] : null;
                 _cards[i].XYFocusDown = i < _cards.Length - 1 ? _cards[i + 1] : null;
             }
+
+            // Log link targets after every update — makes XYFocus corruption visible in the log.
+            for (int i = 0; i < _cards.Length; i++)
+            {
+                var upCard   = _cards[i].XYFocusUp   as SlotCard;
+                var downCard = _cards[i].XYFocusDown as SlotCard;
+                int upIdx    = upCard   is not null ? Array.IndexOf(_cards, upCard)   : -1;
+                int downIdx  = downCard is not null ? Array.IndexOf(_cards, downCard) : -1;
+                NavLog($"[XYFocus] card[{i}] up={upIdx} down={downIdx}");
+            }
         }
         catch (Exception ex)
         {
             NavLog($"[UpdateXYFocusLinks ERROR] {ex}");
         }
+    }
+
+    /// <summary>
+    /// Posts UpdateXYFocusLinks to the dispatcher queue so it runs AFTER WinUI completes
+    /// its layout pass for any pending Children.RemoveAt / Insert / Clear.
+    /// Must be used instead of UpdateXYFocusLinks() whenever a Children modification
+    /// has just occurred (MoveReorderingCard, CancelReorder, ConfirmReorder).
+    /// </summary>
+    private void EnqueueXYFocusUpdate()
+    {
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
+        {
+            NavLog("[EnqueueXYFocusUpdate] deferred — running UpdateXYFocusLinks");
+            UpdateXYFocusLinks();
+        });
     }
 
     // ── Window sizing ─────────────────────────────────────────────────────────

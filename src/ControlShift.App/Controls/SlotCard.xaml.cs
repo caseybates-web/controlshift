@@ -222,6 +222,27 @@ public sealed partial class SlotCard : UserControl
     // ── Rumble ────────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Set hold-progress rumble intensity (0–65535) on both motors.
+    /// Called by MainWindow every HoldTimer tick while A is held.
+    /// Safe to call if not connected — silently skips.
+    /// </summary>
+    public void SetHoldRumble(ushort intensity)
+    {
+        if (_slot is null || !_slot.IsConnected) return;
+        XInput.SetVibration((uint)_slot.SlotIndex, intensity, intensity);
+    }
+
+    /// <summary>
+    /// Stop any in-progress hold rumble immediately (sets both motors to 0).
+    /// Safe to call if not connected — silently skips.
+    /// </summary>
+    public void StopHoldRumble()
+    {
+        if (_slot is null || !_slot.IsConnected) return;
+        XInput.SetVibration((uint)_slot.SlotIndex, 0, 0);
+    }
+
+    /// <summary>
     /// Fire a 200ms rumble pulse at 25% strength.
     /// Called by MainWindow on A-tap and by the mouse/touch Tapped event.
     /// Safe to call if not connected — silently skips.
