@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window
     private DateTime? _aHoldStart;           // when A was first pressed; null when not held
     private bool      _aHoldEnteredReorder;  // true once the 500ms threshold was crossed
     private int       _navTickCount;         // total ticks; reset by watchdog every 5s
+    private int       _holdTickCount;        // hold-timer ticks since last A press; reset on release/cancel/confirm
 
     // Dedicated timer for hold-A progress bar animation.
     // Initialized once in the constructor; reused on every A press (never recreated).
@@ -203,11 +204,14 @@ public sealed partial class MainWindow : Window
 
     private void NavTimer_Tick(object? sender, object e)
     {
-        // Confirm the timer is still alive — visible in Debug Output and log file.
-        Debug.WriteLine($"NAV TICK #{_navTickCount} navTimer=0x{_navTimer.GetHashCode():X} " +
-                        $"| windowActive={_windowActive} focusIdx={_focusedCardIndex} " +
-                        $"reorderIdx={_reorderingIndex} aHoldStart={_aHoldStart.HasValue} " +
-                        $"aEnteredReorder={_aHoldEnteredReorder} suppress={_suppressFocusEvents}");
+        // ALL state flags logged at the very top of every tick — before any early-return.
+        // This line goes to both Debug Output and the log file so post-mortem analysis
+        // can identify exactly which flag is stuck after a reorder cancel/confirm.
+        NavLog($"NAV#{_navTickCount} windowActive={_windowActive} " +
+               $"focusIdx={_focusedCardIndex} reorderIdx={_reorderingIndex} " +
+               $"holdTick={_holdTickCount} aHoldStart={_aHoldStart.HasValue} " +
+               $"aEnteredReorder={_aHoldEnteredReorder} suppress={_suppressFocusEvents} " +
+               $"savedOrderSet={_savedOrder.Any(c => c is not null)}");
         _navTickCount++;
 
         try
@@ -289,6 +293,7 @@ public sealed partial class MainWindow : Window
                 if (aJustReleased)
                 {
                     _holdTimer.Stop();
+                    _holdTickCount = 0;
                     if (_aHoldStart.HasValue && !_aHoldEnteredReorder && _focusedCardIndex >= 0)
                     {
                         // Tap (released before 500ms) — rumble to identify, no reorder.
@@ -335,10 +340,13 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            _holdTickCount++;
+
             if (_aHoldStart is null || _focusedCardIndex < 0)
             {
                 // Guard: shouldn't happen, but stop cleanly if state is inconsistent.
                 _holdTimer.Stop();
+                _holdTickCount = 0;
                 return;
             }
 
@@ -470,17 +478,16 @@ public sealed partial class MainWindow : Window
     {
         if (_reorderingIndex < 0) return;
         int confirmIdx = _reorderingIndex;
-        NavLog($"[ConfirmReorder] card now at idx {confirmIdx}");
+        NavLog($"[ConfirmReorder] confirmIdx={confirmIdx} focusIdx={_focusedCardIndex}");
 
         // Rebuild XY focus links for the new card order before releasing focus suppression.
-        // MoveReorderingCard maintains them per-move, but an explicit rebuild here is cheap
-        // and ensures correctness even if the user confirmed without moving.
         UpdateXYFocusLinks();
 
         _suppressFocusEvents = true;
         try
         {
             _holdTimer.Stop();
+            _holdTickCount       = 0;
             _aHoldStart          = null;
             _aHoldEnteredReorder = false;
             _focusedCardIndex    = confirmIdx;
@@ -494,72 +501,109 @@ public sealed partial class MainWindow : Window
             _suppressFocusEvents = false;
         }
 
-        // Re-assert after suppress ends: deferred LostFocus events queued by earlier
-        // Children.RemoveAt calls inside MoveReorderingCard can fire here and set
-        // _focusedCardIndex = -1, permanently killing d-pad/thumbstick navigation.
+        // Sync drift check — deferred LostFocus from MoveReorderingCard (RemoveAt/Insert)
+        // can have fired synchronously during Focus() above.
         if (_focusedCardIndex != confirmIdx)
         {
-            NavLog($"[ConfirmReorder] *** focus drift {_focusedCardIndex}→{confirmIdx} (deferred LostFocus) — correcting");
+            NavLog($"[ConfirmReorder] sync drift {_focusedCardIndex}→{confirmIdx} — correcting");
             _focusedCardIndex = confirmIdx;
             UpdateCardStates();
         }
 
-        NavLog($"[ConfirmReorder] done — focusIdx={_focusedCardIndex}");
+        // Deferred guard — MoveReorderingCard's Children.RemoveAt/Insert can post deferred
+        // LostFocus events that fire after this method returns.  Same queue-ordering
+        // guarantee as CancelReorder: we enqueue AFTER those events were posted, so
+        // we run last and re-assert the correct _focusedCardIndex.
+        int guardIdx = confirmIdx;
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
+        {
+            if (_reorderingIndex < 0 && _focusedCardIndex != guardIdx)
+            {
+                NavLog($"[ConfirmReorder deferred guard] focusIdx={_focusedCardIndex} expected={guardIdx} — correcting");
+                _focusedCardIndex = guardIdx;
+                UpdateCardStates();
+            }
+        });
+
+        NavLog($"[ConfirmReorder] done — focusIdx={_focusedCardIndex} reorderIdx={_reorderingIndex}");
     }
 
     private void CancelReorder()
     {
         if (_reorderingIndex < 0) return;
-        NavLog($"[CancelReorder] reorderIdx={_reorderingIndex}");
+        NavLog($"[CancelReorder] reorderIdx={_reorderingIndex} focusIdx={_focusedCardIndex}");
 
         // Capture the card being moved BY REFERENCE before we restore _cards[] from
         // _savedOrder — the index may point to a different card after the copy.
         var focusCard = _cards[_reorderingIndex];
 
-        // Clear XYFocus links before removing any element from the visual tree.
-        ClearXYFocusLinks();
-
-        SlotPanel.Children.Clear();
-        Array.Copy(_savedOrder, _cards, _cards.Length);
-        foreach (var card in _cards)
-            SlotPanel.Children.Add(card);
-
-        UpdateXYFocusLinks();
-
-        // Find where the moved card landed after the order is restored.
-        int restoreIdx = Array.IndexOf(_cards, focusCard);
-        if (restoreIdx < 0) restoreIdx = 0;
-
-        // Suppress focus events for the duration of this operation.
-        // The Focus() call below will fire LostFocus then GotFocus events; without
-        // suppression, OnCardLostFocus would set _focusedCardIndex = -1 (because
-        // _reorderingIndex is already -1 at that point), breaking navigation.
+        // Suppress BEFORE any tree modification.
+        // Children.Clear() posts deferred LostFocus events to the WinUI dispatcher
+        // queue; those events fire in a subsequent dispatcher cycle AFTER this method
+        // returns and AFTER suppress is cleared by the finally block.  If suppress is
+        // not set here, the first tree-removal LostFocus fires unsuppressed and calls
+        // OnCardLostFocus with _reorderingIndex already -1, setting _focusedCardIndex
+        // to -1 and permanently breaking d-pad navigation.  Setting suppress first
+        // makes any synchronous LostFocus (same-tick) a no-op; the DispatcherQueue
+        // guard below handles the deferred (next-tick) case.
         _suppressFocusEvents = true;
         try
         {
+            ClearXYFocusLinks();
+            SlotPanel.Children.Clear();
+            Array.Copy(_savedOrder, _cards, _cards.Length);
+            foreach (var card in _cards)
+                SlotPanel.Children.Add(card);
+            UpdateXYFocusLinks();
+
+            int restoreIdx = Array.IndexOf(_cards, focusCard);
+            if (restoreIdx < 0) restoreIdx = 0;
+
             _holdTimer.Stop();
+            _holdTickCount       = 0;
             _aHoldStart          = null;
             _aHoldEnteredReorder = false;
             _focusedCardIndex    = restoreIdx;
             _reorderingIndex     = -1;
 
             UpdateCardStates();
-            _cards[_focusedCardIndex].Focus(FocusState.Programmatic);
+            _cards[restoreIdx].Focus(FocusState.Programmatic);
         }
         finally
         {
             _suppressFocusEvents = false;
         }
 
-        // Same deferred-LostFocus guard as ConfirmReorder.
-        if (_focusedCardIndex != restoreIdx)
+        // Sync drift check — catches events that fired synchronously within the try block.
+        int expectedIdx = Array.IndexOf(_cards, focusCard);
+        if (expectedIdx < 0) expectedIdx = 0;
+        if (_focusedCardIndex != expectedIdx)
         {
-            NavLog($"[CancelReorder] *** focus drift {_focusedCardIndex}→{restoreIdx} (deferred LostFocus) — correcting");
-            _focusedCardIndex = restoreIdx;
+            NavLog($"[CancelReorder] sync drift {_focusedCardIndex}→{expectedIdx} — correcting");
+            _focusedCardIndex = expectedIdx;
             UpdateCardStates();
         }
 
-        NavLog($"[CancelReorder] done — focusIdx={_focusedCardIndex}");
+        // Deferred guard — runs AFTER any pending deferred LostFocus events from
+        // Children.Clear().  Those events are posted to the dispatcher queue during
+        // Clear() and fire in the next dispatcher cycle (after this method and its
+        // caller have already returned), where _suppressFocusEvents is already false
+        // and _reorderingIndex is already -1, causing OnCardLostFocus to clobber
+        // _focusedCardIndex.  Because we enqueue THIS callback AFTER Clear() posted
+        // its event, the dispatcher FIFO ordering guarantees we run LAST and can
+        // re-assert the correct value.
+        int guardIdx = expectedIdx;
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
+        {
+            if (_reorderingIndex < 0 && _focusedCardIndex != guardIdx)
+            {
+                NavLog($"[CancelReorder deferred guard] focusIdx={_focusedCardIndex} expected={guardIdx} — correcting");
+                _focusedCardIndex = guardIdx;
+                UpdateCardStates();
+            }
+        });
+
+        NavLog($"[CancelReorder] done — focusIdx={_focusedCardIndex} reorderIdx={_reorderingIndex}");
     }
 
     private void MoveReorderingCard(int direction)
