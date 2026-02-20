@@ -1,138 +1,179 @@
-using System.Diagnostics;
-using Vortice.XInput;
+using HidSharp;
+using Nefarius.ViGEm.Client;
+using ControlShift.Core.Devices;
+using ControlShift.Core.Models;
 
 namespace ControlShift.Core.Forwarding;
 
 /// <summary>
-/// Runs a Stopwatch-based 125Hz loop that reads XInput state from physical slots 0–3
-/// and forwards to virtual ViGEm controllers according to a configurable slot map.
+/// Orchestrates controller reordering by managing ViGEm virtual controllers,
+/// HidHide device suppression, and HID→ViGEm forwarding pairs.
 /// </summary>
-public sealed class InputForwardingService : IDisposable
+/// <remarks>
+/// DECISION: Uses a <see cref="SemaphoreSlim"/> to prevent concurrent Start/Stop calls.
+/// All forwarding threads are dedicated (not thread-pool) with AboveNormal priority.
+/// </remarks>
+public sealed class InputForwardingService : IInputForwardingService
 {
-    private readonly ViGEmControllerPool _pool;
-    private readonly int[] _slotMap = { 0, 1, 2, 3 }; // slotMap[physical] = virtual
-    private readonly object _slotMapLock = new();
-    private Thread? _thread;
-    private volatile bool _running;
-    private bool _disposed;
+    private readonly IHidHideService _hidHide;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly List<ForwardingPair> _pairs = new();
+    private readonly List<SlotAssignment> _activeAssignments = new();
 
-    /// <summary>Target loop interval in milliseconds.</summary>
-    private const double TargetIntervalMs = 8.0; // ~125Hz
+    private ViGEmClient? _vigemClient;
+    private int _errorCount;
 
-    public InputForwardingService(ViGEmControllerPool pool)
+    public bool IsForwarding => _pairs.Count > 0;
+    public IReadOnlyList<SlotAssignment> ActiveAssignments => _activeAssignments.AsReadOnly();
+
+    public event EventHandler<ForwardingErrorEventArgs>? ForwardingError;
+
+    public InputForwardingService(IHidHideService hidHide)
     {
-        _pool = pool;
+        _hidHide = hidHide;
     }
 
-    /// <summary>
-    /// Updates the slot mapping. slotMap[physicalSlot] = virtualSlot.
-    /// Thread-safe — takes effect on the next forwarding cycle.
-    /// </summary>
-    public void SetSlotMap(int[] newMap)
+    public async Task StartForwardingAsync(IReadOnlyList<SlotAssignment> assignments)
     {
-        if (newMap.Length != 4) throw new ArgumentException("Slot map must have exactly 4 entries.");
-        lock (_slotMapLock)
+        await _gate.WaitAsync();
+        try
         {
-            Array.Copy(newMap, _slotMap, 4);
-        }
-        Debug.WriteLine($"[InputForwarding] SlotMap updated: " +
-                        $"phys0→virt{newMap[0]}, phys1→virt{newMap[1]}, " +
-                        $"phys2→virt{newMap[2]}, phys3→virt{newMap[3]}");
-    }
+            if (IsForwarding)
+                throw new InvalidOperationException("Forwarding is already active. Call StopForwardingAsync first.");
 
-    /// <summary>Gets a copy of the current slot map.</summary>
-    public int[] GetSlotMap()
-    {
-        lock (_slotMapLock)
-        {
-            return (int[])_slotMap.Clone();
-        }
-    }
+            _errorCount = 0;
 
-    /// <summary>Starts the forwarding loop on a background thread.</summary>
-    public void Start()
-    {
-        if (_running) return;
-        _running = true;
-        _thread = new Thread(ForwardingLoop)
-        {
-            Name = "ControlShift-Forwarding",
-            IsBackground = true,
-            Priority = ThreadPriority.AboveNormal
-        };
-        _thread.Start();
-    }
+            // Create the ViGEmBus client (shared for all virtual controllers).
+            _vigemClient = new ViGEmClient();
 
-    /// <summary>Stops the forwarding loop and waits for the thread to exit.</summary>
-    public void Stop()
-    {
-        _running = false;
-        _thread?.Join(timeout: TimeSpan.FromSeconds(2));
-        _thread = null;
-    }
+            // Whitelist our own process so we can still see hidden devices.
+            var exePath = Environment.ProcessPath
+                ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+            if (exePath is not null)
+                _hidHide.AddApplicationRule(exePath);
 
-    /// <summary>True if the forwarding loop is running.</summary>
-    public bool IsRunning => _running;
-
-    private void ForwardingLoop()
-    {
-        var sw = Stopwatch.StartNew();
-
-        while (_running)
-        {
-            long tickStart = sw.ElapsedTicks;
-
-            // Snapshot the slot map for this cycle
-            int v0, v1, v2, v3;
-            lock (_slotMapLock)
-            {
-                v0 = _slotMap[0];
-                v1 = _slotMap[1];
-                v2 = _slotMap[2];
-                v3 = _slotMap[3];
-            }
+            var createdPairs = new List<ForwardingPair>();
 
             try
             {
-                // Read all 4 physical slots
-                XInput.GetState(0, out State s0);
-                XInput.GetState(1, out State s1);
-                XInput.GetState(2, out State s2);
-                XInput.GetState(3, out State s3);
+                foreach (var assignment in assignments)
+                {
+                    if (assignment.SourceDevicePath is null)
+                        continue;
 
-                // Forward to virtual controllers according to slot map
-                ViGEmControllerPool.Forward(_pool[v0], s0.Gamepad);
-                ViGEmControllerPool.Forward(_pool[v1], s1.Gamepad);
-                ViGEmControllerPool.Forward(_pool[v2], s2.Gamepad);
-                ViGEmControllerPool.Forward(_pool[v3], s3.Gamepad);
+                    // 1. Create ViGEm virtual controller.
+                    var vigem = new ViGEmController(_vigemClient);
+                    vigem.Connect();
+
+                    // 2. Hide the physical device.
+                    string instanceId = DevicePathConverter.ToInstanceId(assignment.SourceDevicePath);
+                    _hidHide.HideDevice(instanceId);
+
+                    // 3. Open the HID device for reading.
+                    var hidDevice = DeviceList.Local.GetHidDevices()
+                        .FirstOrDefault(d => string.Equals(d.DevicePath, assignment.SourceDevicePath,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (hidDevice is null)
+                    {
+                        vigem.Dispose();
+                        throw new InvalidOperationException(
+                            $"HID device not found for path: {assignment.SourceDevicePath}");
+                    }
+
+                    var stream = hidDevice.Open();
+
+                    // 4. Create and start the forwarding pair.
+                    var pair = new ForwardingPair(
+                        assignment.TargetSlot,
+                        assignment.SourceDevicePath,
+                        vigem,
+                        stream,
+                        OnForwardingError);
+
+                    pair.Start();
+                    createdPairs.Add(pair);
+                }
+
+                // Activate HidHide now that all devices are hidden.
+                _hidHide.SetActive(true);
+
+                _pairs.AddRange(createdPairs);
+                _activeAssignments.Clear();
+                _activeAssignments.AddRange(assignments);
             }
             catch
             {
-                // Forwarding errors must not kill the loop — log and continue
+                // Rollback: destroy any pairs we already created.
+                foreach (var pair in createdPairs)
+                {
+                    try { pair.Dispose(); } catch { /* best effort */ }
+                }
+
+                _hidHide.ClearAllRules();
+                _vigemClient?.Dispose();
+                _vigemClient = null;
+                throw;
             }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
-            // Stopwatch-based sleep: spin-wait for precise timing instead of Thread.Sleep
-            double elapsedMs = (sw.ElapsedTicks - tickStart) * 1000.0 / Stopwatch.Frequency;
-            double remainingMs = TargetIntervalMs - elapsedMs;
-
-            if (remainingMs > 2.0)
+    public async Task StopForwardingAsync()
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            // Stop and dispose all forwarding pairs.
+            foreach (var pair in _pairs)
             {
-                // Sleep for the bulk of the remaining time, then spin for precision
-                Thread.Sleep((int)(remainingMs - 1.5));
+                try { pair.Dispose(); } catch { /* best effort */ }
             }
+            _pairs.Clear();
 
-            // Spin-wait for the final sub-millisecond precision
-            while ((sw.ElapsedTicks - tickStart) * 1000.0 / Stopwatch.Frequency < TargetIntervalMs)
-            {
-                Thread.SpinWait(10);
-            }
+            // Clear all HidHide rules and deactivate.
+            _hidHide.ClearAllRules();
+
+            // Dispose the ViGEmBus client.
+            _vigemClient?.Dispose();
+            _vigemClient = null;
+
+            _activeAssignments.Clear();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private void OnForwardingError(ForwardingErrorEventArgs e)
+    {
+        ForwardingError?.Invoke(this, e);
+
+        // If all pairs have errored out, auto-stop.
+        Interlocked.Increment(ref _errorCount);
+        if (_errorCount >= _pairs.Count && _pairs.Count > 0)
+        {
+            _ = StopForwardingAsync();
         }
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        Stop();
+        // Synchronous best-effort cleanup.
+        foreach (var pair in _pairs)
+        {
+            try { pair.Dispose(); } catch { /* best effort */ }
+        }
+        _pairs.Clear();
+
+        try { _hidHide.ClearAllRules(); } catch { /* best effort */ }
+
+        _vigemClient?.Dispose();
+        _vigemClient = null;
+
+        _gate.Dispose();
     }
 }

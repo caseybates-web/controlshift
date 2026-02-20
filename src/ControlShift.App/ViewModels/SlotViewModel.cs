@@ -35,6 +35,7 @@ public sealed class SlotViewModel : INotifyPropertyChanged
     private string _vendorBrand     = string.Empty;
     private string _vidPid          = string.Empty;
     private string _batteryText     = string.Empty;
+    private string? _devicePath;
 
     public bool IsConnected
     {
@@ -80,6 +81,13 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         set => Set(ref _batteryText, value);
     }
 
+    /// <summary>HID device path for this controller, or null when no HID match.</summary>
+    public string? DevicePath
+    {
+        get => _devicePath;
+        set => Set(ref _devicePath, value);
+    }
+
     /// <summary>Segoe MDL2 Assets glyph for the battery level. Empty when no battery info.</summary>
     public string BatteryGlyph => BatteryText switch
     {
@@ -113,6 +121,7 @@ public sealed class SlotViewModel : INotifyPropertyChanged
             VendorBrand     = string.Empty;
             VidPid          = string.Empty;
             BatteryText     = string.Empty;
+            DevicePath      = null;
             return;
         }
 
@@ -153,5 +162,6 @@ public sealed class SlotViewModel : INotifyPropertyChanged
         VidPid      = mc.Hid is not null ? $"{mc.Hid.Vid}:{mc.Hid.Pid}" : string.Empty;
 
         BatteryText = mc.BatteryPercent.HasValue ? $"{mc.BatteryPercent}%" : string.Empty;
+        DevicePath  = mc.Hid?.DevicePath;
     }
 }
