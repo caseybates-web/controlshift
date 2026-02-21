@@ -3,6 +3,7 @@ using HidSharp;
 using Nefarius.ViGEm.Client;
 using Vortice.XInput;
 using ControlShift.Core.Devices;
+using ControlShift.Core.Diagnostics;
 using ControlShift.Core.Models;
 
 namespace ControlShift.Core.Forwarding;
@@ -169,6 +170,7 @@ public sealed class InputForwardingService : IInputForwardingService
                         _virtualSlotIndices.Add(slot);
                 }
                 DiagLog($"Virtual slots (snapshot diff): [{string.Join(", ", _virtualSlotIndices)}]");
+                DebugLog.Log($"[ViGEm] Virtual slots detected: [{string.Join(", ", _virtualSlotIndices)}]");
             }
             else if (!poolGrew)
             {
@@ -202,6 +204,7 @@ public sealed class InputForwardingService : IInputForwardingService
                     // Hide the physical device via HidHide.
                     string instanceId = DevicePathConverter.ToInstanceId(assignment.SourceDevicePath);
                     DiagLog($"HidHide: slot {assignment.TargetSlot} → {instanceId}");
+                    DebugLog.HidHide("hide", instanceId);
                     _hidHide.HideDevice(instanceId);
 
                     // Open the HID device for reading.
@@ -226,6 +229,7 @@ public sealed class InputForwardingService : IInputForwardingService
 
                     pair.Start();
                     createdPairs.Add(pair);
+                    DebugLog.ViGEmSlotAssigned(assignment.TargetSlot, vigem.UserIndex);
                 }
 
                 // Activate HidHide now that all devices are hidden.
@@ -263,6 +267,7 @@ public sealed class InputForwardingService : IInputForwardingService
         await _gate.WaitAsync();
         try
         {
+            DebugLog.Log("[Forwarding] StopForwardingAsync — clearing pairs and HidHide rules");
             // Stop and dispose all forwarding pairs (HID streams only).
             foreach (var pair in _pairs)
             {
@@ -271,6 +276,7 @@ public sealed class InputForwardingService : IInputForwardingService
             _pairs.Clear();
 
             // Clear all HidHide rules and deactivate.
+            DebugLog.HidHide("clearAll", "(all rules)");
             _hidHide.ClearAllRules();
 
             _activeAssignments.Clear();
@@ -291,6 +297,7 @@ public sealed class InputForwardingService : IInputForwardingService
         await _gate.WaitAsync();
         try
         {
+            DebugLog.Log("[Forwarding] RevertAllAsync — full teardown");
             // Stop all forwarding pairs.
             foreach (var pair in _pairs)
             {
@@ -340,6 +347,7 @@ public sealed class InputForwardingService : IInputForwardingService
 
     private void OnForwardingError(ForwardingErrorEventArgs e)
     {
+        DebugLog.Log($"[Forwarding] Error slot={e.TargetSlot} path={e.DevicePath}: {e.ErrorMessage}");
         ForwardingError?.Invoke(this, e);
 
         // If all pairs have errored out, auto-stop (lightweight — keeps ViGEm).

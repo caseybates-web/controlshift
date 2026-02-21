@@ -1,4 +1,5 @@
 using ControlShift.Core.Devices;
+using ControlShift.Core.Diagnostics;
 
 namespace ControlShift.App;
 
@@ -35,6 +36,8 @@ class Program
             return;
         }
 
+        DebugLog.Startup();
+
         try
         {
             var svc = new HidHideService();
@@ -43,11 +46,13 @@ class Program
             else
                 HidHideService = new NullHidHideService();
         }
-        catch
+        catch (Exception ex)
         {
+            DebugLog.Exception("HidHideService init", ex);
             HidHideService = new NullHidHideService();
         }
 
+        DebugLog.Log($"HidHide driver: {(HidHideService.IsDriverInstalled ? "installed" : "not installed (using null)")}");
         CrashSafetyGuard.Install(HidHideService);
 
         WinRT.ComWrappersSupport.InitializeComWrappers();

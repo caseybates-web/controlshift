@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using ControlShift.Core.Diagnostics;
 using ControlShift.Core.Forwarding;
 
 namespace ControlShift.App;
@@ -10,6 +11,7 @@ public partial class App : Application
         this.InitializeComponent();
         this.UnhandledException += (_, args) =>
         {
+            DebugLog.Exception("UnhandledException", args.Exception);
             try { Program.HidHideService.ClearAllRules(); }
             catch { }
         };

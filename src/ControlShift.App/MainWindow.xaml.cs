@@ -10,6 +10,7 @@ using Windows.System;
 using ControlShift.App.Controls;
 using ControlShift.App.ViewModels;
 using ControlShift.Core.Devices;
+using ControlShift.Core.Diagnostics;
 using ControlShift.Core.Enumeration;
 using ControlShift.Core.Forwarding;
 using ControlShift.Core.Models;
@@ -123,6 +124,7 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
 
         NavLog($"MainWindow ctor — log: {NavLogPath}");
+        DebugLog.Log("MainWindow created");
 
         string dbPath      = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
         string vendorsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-vendors.json");
@@ -244,6 +246,18 @@ public sealed partial class MainWindow : Window
             ApplyNicknames();
             return;
         }
+
+        // Log controller connect/disconnect by comparing old vs new slots.
+        var oldSlots = _cards.Select(c => c.SlotIndex).ToHashSet();
+        var newSlots = _viewModel.Slots.Select(s => s.SlotIndex).ToHashSet();
+        foreach (var slot in newSlots.Except(oldSlots))
+        {
+            var vm = _viewModel.Slots.FirstOrDefault(s => s.SlotIndex == slot);
+            if (vm is not null)
+                DebugLog.ControllerChange("connect", slot, vm.VidPid ?? "", vm.ConnectionLabel ?? "");
+        }
+        foreach (var slot in oldSlots.Except(newSlots))
+            DebugLog.ControllerChange("disconnect", slot, "", "");
 
         EnsureCards(_viewModel.Slots.Count);
 
@@ -473,6 +487,7 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        DebugLog.Shutdown("window closed");
         _pollTimer.Stop();
         _navTimer.Stop();
         _watchdogTimer.Stop();
@@ -507,6 +522,7 @@ public sealed partial class MainWindow : Window
             // from UI enumeration (prevents "Unknown Controller USB" ghost cards).
             _viewModel.ExcludedSlotIndices = _forwardingService.VirtualSlotIndices;
             NavLog($"[Forwarding] Started — virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
+            DebugLog.Log($"[Forwarding] Started — {assignments.Count} assignments, virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
             if (RevertButton is not null)
                 RevertButton.Visibility = Visibility.Visible;
         }
@@ -524,6 +540,7 @@ public sealed partial class MainWindow : Window
             _viewModel.ExcludedSlotIndices = new HashSet<int>();
             _slotOrderStore.Clear();
             NavLog("[Forwarding] Reverted — ViGEm disconnected, physical order restored");
+            DebugLog.Log("[Forwarding] Reverted — ViGEm disconnected, physical order restored");
             if (RevertButton is not null)
                 RevertButton.Visibility = Visibility.Collapsed;
             _ = RefreshAsync();
@@ -537,6 +554,7 @@ public sealed partial class MainWindow : Window
     private void OnForwardingError(object? sender, ForwardingErrorEventArgs e)
     {
         NavLog($"[Forwarding] Error on slot {e.TargetSlot} ({e.DevicePath}): {e.ErrorMessage}");
+        DebugLog.Log($"[Forwarding] Error on slot {e.TargetSlot} ({e.DevicePath}): {e.ErrorMessage}");
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_forwardingService.IsForwarding && RevertButton is not null)
@@ -560,6 +578,7 @@ public sealed partial class MainWindow : Window
         if (vidPids.Length == 0) return;
 
         var slotMap = BuildSlotMap();
+        DebugLog.SlotMapChange(new[] { 0, 1, 2, 3 }, slotMap);
         _slotOrderStore.Save(vidPids, slotMap);
         NavLog($"[SaveOrder] Saved {vidPids.Length} entries: [{string.Join(", ", vidPids)}]");
     }
@@ -856,6 +875,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             NavLog($"[NavTimer_Tick ERROR] {ex}");
+            DebugLog.Exception("NavTimer_Tick", ex);
         }
     }
 
@@ -1066,6 +1086,8 @@ public sealed partial class MainWindow : Window
             _aHoldEnteredReorder = false;
         }
         _focusedElement = element;
+        var cardIdx = element is SlotCard sc ? _cards.IndexOf(sc) : -1;
+        DebugLog.FocusChange(element.GetType().Name, cardIdx);
         UpdateCardStates();
         UpdateButtonFocusVisuals();
     }
@@ -1491,12 +1513,15 @@ public sealed partial class MainWindow : Window
             _deviceChangeDebounce.Tick += async (_, _) =>
             {
                 _deviceChangeDebounce!.Stop();
+                int countBefore = _cards.Count;
                 NavLog("[WM_DEVICECHANGE] Debounced full refresh — invalidating all caches");
                 _xinputEnum.InvalidateAll();
                 _hidEnum.InvalidateCache();
                 // PnpBusDetector cache is permanent (additive) — new device paths
                 // automatically get a fresh CfgMgr32 tree walk on cache miss.
                 await RefreshAsync();
+                int countAfter = _cards.Count;
+                DebugLog.DeviceChange(countBefore, countAfter);
             };
         }
 

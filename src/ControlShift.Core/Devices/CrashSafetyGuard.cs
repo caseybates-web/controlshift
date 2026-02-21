@@ -1,3 +1,5 @@
+using ControlShift.Core.Diagnostics;
+
 namespace ControlShift.Core.Devices;
 
 /// <summary>
@@ -24,8 +26,20 @@ public static class CrashSafetyGuard
         catch { /* Driver may not be installed — NullHidHideService handles this. */ }
 
         // 2. Register AppDomain-level handlers (fires on unhandled exceptions and process exit).
-        AppDomain.CurrentDomain.UnhandledException += (_, _) => SafeClear(hidHide);
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => SafeClear(hidHide);
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception ex)
+                DebugLog.Exception("AppDomain.UnhandledException", ex);
+            else
+                DebugLog.Log($"[CrashSafety] Unhandled exception (non-Exception): {args.ExceptionObject}");
+            DebugLog.Shutdown("crash");
+            SafeClear(hidHide);
+        };
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            DebugLog.Shutdown("process exit");
+            SafeClear(hidHide);
+        };
     }
 
     private static void SafeClear(IHidHideService hidHide)
