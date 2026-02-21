@@ -1476,7 +1476,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Reads raw XInput state via P/Invoke, bypassing all ControlShift logic,
-    /// and updates the 4 status lines in the footer panel.
+    /// and updates the status lines in the footer panel. Hides virtual ViGEm slots.
     /// </summary>
     private void RefreshWindowsSees()
     {
@@ -1484,39 +1484,70 @@ public sealed partial class MainWindow : Window
         const uint XINPUT_FLAG_GAMEPAD = 0x00000001;
 
         TextBlock[] rows = { WindowsSeesP1, WindowsSeesP2, WindowsSeesP3, WindowsSeesP4 };
+        var virtualSlots = _forwardingService.VirtualSlotIndices;
+        var greenBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x10, 0x7C, 0x10));
+        var greyBrush = (Microsoft.UI.Xaml.Media.SolidColorBrush)
+            Application.Current.Resources["XbTextMutedBrush"];
 
         for (uint i = 0; i < 4; i++)
         {
+            // Hide virtual ViGEm slots — they have no physical input.
+            if (virtualSlots.Contains((int)i))
+            {
+                rows[i].Visibility = Visibility.Collapsed;
+                continue;
+            }
+
+            rows[i].Visibility = Visibility.Visible;
             uint rc = RawXInputGetState(i, out _);
             if (rc == ERROR_SUCCESS)
             {
-                string name = "Controller";
-                uint capRc = RawXInputGetCapabilities(i, XINPUT_FLAG_GAMEPAD, out XINPUT_CAPABILITIES caps);
-                if (capRc == ERROR_SUCCESS)
+                // Try to get the display name from the card list for richer labels.
+                string? cardName = null;
+                string? connLabel = null;
+                var slotVm = _viewModel.Slots.FirstOrDefault(s => s.SlotIndex == (int)i);
+                if (slotVm is not null && slotVm.IsConnected)
                 {
-                    name = caps.SubType switch
-                    {
-                        0x01 => "Gamepad",
-                        0x02 => "Wheel",
-                        0x03 => "Arcade Stick",
-                        0x04 => "Flight Stick",
-                        0x05 => "Dance Pad",
-                        0x06 => "Guitar",
-                        0x08 => "Drum Kit",
-                        _ => "Controller",
-                    };
-                    bool wireless = (caps.Flags & 0x0002) != 0;
-                    if (wireless) name += " (Wireless)";
+                    cardName = slotVm.DisplayName;
+                    connLabel = slotVm.ConnectionLabel;
                 }
-                rows[i].Text = $"\u2B24  P{i + 1}: {name}";
-                rows[i].Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                    Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x10, 0x7C, 0x10));
+
+                // Fall back to XInputGetCapabilities subtype if no card match.
+                if (string.IsNullOrEmpty(cardName))
+                {
+                    cardName = "Gamepad";
+                    uint capRc = RawXInputGetCapabilities(i, XINPUT_FLAG_GAMEPAD, out XINPUT_CAPABILITIES caps);
+                    if (capRc == ERROR_SUCCESS)
+                    {
+                        cardName = caps.SubType switch
+                        {
+                            0x01 => "Gamepad",
+                            0x02 => "Wheel",
+                            0x03 => "Arcade Stick",
+                            0x04 => "Flight Stick",
+                            0x05 => "Dance Pad",
+                            0x06 => "Guitar",
+                            0x08 => "Drum Kit",
+                            _ => "Controller",
+                        };
+                        bool wireless = (caps.Flags & 0x0002) != 0;
+                        if (wireless && string.IsNullOrEmpty(connLabel))
+                            connLabel = "Wireless";
+                    }
+                }
+
+                string label = !string.IsNullOrEmpty(connLabel)
+                    ? $"{cardName} ({connLabel})"
+                    : cardName;
+
+                rows[i].Text = $"\u2B24  P{i + 1}: {label}";
+                rows[i].Foreground = greenBrush;
             }
             else
             {
                 rows[i].Text = $"\u2B24  P{i + 1}: Empty";
-                rows[i].Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)
-                    Application.Current.Resources["XbTextMutedBrush"];
+                rows[i].Foreground = greyBrush;
             }
         }
     }
