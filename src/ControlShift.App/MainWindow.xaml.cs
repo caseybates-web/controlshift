@@ -739,8 +739,10 @@ public sealed partial class MainWindow : Window
 
                 long t0 = Stopwatch.GetTimestamp();
 
-                if ((current & GamepadButtons.Guide) != 0)
-                    DebugLog.Log($"[NavThread] GUIDE BUTTON in XInput! buttons=0x{(ushort)current:X4}");
+                // Strip Guide button from nav input — the Xbox button should pass through
+                // to Windows/games naturally via the physical controller. ControlShift must
+                // never intercept it or let it trigger any UI navigation action.
+                current &= ~GamepadButtons.Guide;
 
                 // ── Edge detection ────────────────────────────────────────────
                 var newPresses  = current     & ~prevButtons;

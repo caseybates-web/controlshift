@@ -1,7 +1,6 @@
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
-using ControlShift.Core.Diagnostics;
 
 namespace ControlShift.Core.Devices;
 
@@ -14,8 +13,6 @@ namespace ControlShift.Core.Devices;
 /// </remarks>
 public sealed class ViGEmController : IViGEmController
 {
-    private const ushort GuideButtonMask = 0x0400;
-
     private readonly IXbox360Controller _controller;
     private bool _connected;
     private bool _disposed;
@@ -55,14 +52,12 @@ public sealed class ViGEmController : IViGEmController
     {
         if (!_connected) return;
 
-        // Strip the Guide button — forwarding it through ViGEm triggers
-        // the Windows Xbox Game Bar / task switcher.
-        ushort buttons = (ushort)(r.Buttons & ~GuideButtonMask);
-
-        if ((r.Buttons & GuideButtonMask) != 0)
-            DebugLog.Log($"[ViGEm] Guide button BLOCKED (raw buttons=0x{r.Buttons:X4})");
+        ushort buttons = r.Buttons;
 
         // Buttons — standard Xbox 360 bitmask mapping.
+        // Guide button (0x0400) is forwarded faithfully so the Xbox button
+        // works in games and opens Game Bar. The NavInput thread in the UI
+        // strips Guide from its own edge detection to avoid triggering nav actions.
         _controller.SetButtonState(Xbox360Button.Up,             (buttons & 0x0001) != 0);
         _controller.SetButtonState(Xbox360Button.Down,           (buttons & 0x0002) != 0);
         _controller.SetButtonState(Xbox360Button.Left,           (buttons & 0x0004) != 0);
@@ -73,7 +68,7 @@ public sealed class ViGEmController : IViGEmController
         _controller.SetButtonState(Xbox360Button.RightThumb,     (buttons & 0x0080) != 0);
         _controller.SetButtonState(Xbox360Button.LeftShoulder,   (buttons & 0x0100) != 0);
         _controller.SetButtonState(Xbox360Button.RightShoulder,  (buttons & 0x0200) != 0);
-        _controller.SetButtonState(Xbox360Button.Guide,          false); // never forward Guide
+        _controller.SetButtonState(Xbox360Button.Guide,          (buttons & 0x0400) != 0);
         _controller.SetButtonState(Xbox360Button.A,              (buttons & 0x1000) != 0);
         _controller.SetButtonState(Xbox360Button.B,              (buttons & 0x2000) != 0);
         _controller.SetButtonState(Xbox360Button.X,              (buttons & 0x4000) != 0);
