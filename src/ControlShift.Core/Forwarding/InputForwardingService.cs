@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using HidSharp;
 using Nefarius.ViGEm.Client;
 using Vortice.XInput;
 using ControlShift.Core.Devices;
@@ -187,7 +186,7 @@ public sealed class InputForwardingService : IInputForwardingService
                 int poolIdx = 0;
                 foreach (var assignment in assignments)
                 {
-                    if (assignment.SourceDevicePath is null)
+                    if (assignment.SourceDevicePath is null || assignment.SourceSlotIndex < 0)
                         continue;
 
                     // Reuse ViGEm controller from the persistent pool.
@@ -199,28 +198,20 @@ public sealed class InputForwardingService : IInputForwardingService
                     DebugLog.HidHide("hide", instanceId);
                     _hidHide.HideDevice(instanceId);
 
-                    // Open the HID device for reading.
-                    var hidDevice = DeviceList.Local.GetHidDevices()
-                        .FirstOrDefault(d => string.Equals(d.DevicePath, assignment.SourceDevicePath,
-                            StringComparison.OrdinalIgnoreCase));
-                    if (hidDevice is null)
-                    {
-                        throw new InvalidOperationException(
-                            $"HID device not found for path: {assignment.SourceDevicePath}");
-                    }
-
-                    var stream = hidDevice.Open();
-
                     // Create and start the forwarding pair.
+                    // Reads XInput (via XInputGetStateEx for Guide button) from the
+                    // physical slot — no HID stream needed. This avoids HID report
+                    // format mismatches across USB, BT, and integrated gamepads.
                     var pair = new ForwardingPair(
+                        assignment.SourceSlotIndex,
                         assignment.TargetSlot,
                         assignment.SourceDevicePath,
                         vigem,
-                        stream,
                         OnForwardingError);
 
                     pair.Start();
                     createdPairs.Add(pair);
+                    DiagLog($"ForwardingPair: physSlot={assignment.SourceSlotIndex} → targetSlot={assignment.TargetSlot}");
                     DebugLog.ViGEmSlotAssigned(assignment.TargetSlot, vigem.UserIndex);
                 }
 
@@ -273,6 +264,53 @@ public sealed class InputForwardingService : IInputForwardingService
 
             _activeAssignments.Clear();
             // NOTE: ViGEm pool and _virtualSlotIndices are intentionally kept alive.
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Hot-swaps the physical→virtual mapping on running forwarding pairs.
+    /// Threads keep running, HidHide stays active, ViGEm controllers stay connected.
+    /// Only the ViGEm controller reference on each pair changes.
+    /// </summary>
+    public async Task UpdateMappingAsync(IReadOnlyList<SlotAssignment> assignments)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            if (!IsForwarding)
+                throw new InvalidOperationException("Cannot update mapping — forwarding is not active.");
+
+            DiagLog($"UpdateMappingAsync — {assignments.Count} assignments, {_pairs.Count} active pairs");
+            InputTrace.Log($"[FwdSvc] UpdateMappingAsync — remapping {_pairs.Count} pairs");
+
+            // Build lookup: physicalSlot → ForwardingPair
+            var pairsByPhysSlot = new Dictionary<int, ForwardingPair>();
+            foreach (var pair in _pairs)
+                pairsByPhysSlot[pair.PhysicalSlot] = pair;
+
+            // Reassign ViGEm controllers: assignment at index i gets pool[i].
+            int poolIdx = 0;
+            foreach (var assignment in assignments)
+            {
+                if (assignment.SourceDevicePath is null || assignment.SourceSlotIndex < 0)
+                    continue;
+
+                if (!pairsByPhysSlot.TryGetValue(assignment.SourceSlotIndex, out var pair))
+                {
+                    DiagLog($"WARNING: no pair found for physSlot={assignment.SourceSlotIndex}");
+                    continue;
+                }
+
+                var vigem = _vigemPool[poolIdx++];
+                pair.SwapTarget(assignment.TargetSlot, vigem);
+            }
+
+            _activeAssignments.Clear();
+            _activeAssignments.AddRange(assignments);
         }
         finally
         {

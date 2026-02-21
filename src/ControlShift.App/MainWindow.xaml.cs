@@ -544,7 +544,6 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            await _forwardingService.StopForwardingAsync();
             var assignments = new List<ControlShift.Core.Models.SlotAssignment>();
             for (int visualPos = 0; visualPos < _cards.Count; visualPos++)
             {
@@ -553,15 +552,28 @@ public sealed partial class MainWindow : Window
                 {
                     TargetSlot       = visualPos,
                     SourceDevicePath = card.DevicePath,
+                    SourceSlotIndex  = card.SlotIndex,
                 });
             }
-            await _forwardingService.StartForwardingAsync(assignments);
 
-            // Tell the ViewModel which XInput slots are virtual so they're excluded
-            // from UI enumeration (prevents "Unknown Controller USB" ghost cards).
-            _viewModel.ExcludedSlotIndices = _forwardingService.VirtualSlotIndices;
-            NavLog($"[Forwarding] Started — virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
-            DebugLog.Log($"[Forwarding] Started — {assignments.Count} assignments, virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
+            if (_forwardingService.IsForwarding)
+            {
+                // Hot-swap mapping only — no driver stack changes.
+                await _forwardingService.UpdateMappingAsync(assignments);
+                NavLog($"[Forwarding] Mapping updated (hot-swap)");
+                DebugLog.Log($"[Forwarding] Mapping updated (hot-swap) — {assignments.Count} assignments");
+            }
+            else
+            {
+                // First start — full initialization with ViGEm pool, HidHide, threads.
+                await _forwardingService.StartForwardingAsync(assignments);
+
+                // Tell the ViewModel which XInput slots are virtual so they're excluded
+                // from UI enumeration (prevents "Unknown Controller USB" ghost cards).
+                _viewModel.ExcludedSlotIndices = _forwardingService.VirtualSlotIndices;
+                NavLog($"[Forwarding] Started — virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
+                DebugLog.Log($"[Forwarding] Started — {assignments.Count} assignments, virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
+            }
         }
         catch (Exception ex)
         {

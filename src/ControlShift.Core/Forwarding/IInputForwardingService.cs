@@ -15,6 +15,12 @@ public interface IInputForwardingService : IDisposable
     /// ViGEm virtual controllers remain connected for reuse.</summary>
     Task StopForwardingAsync();
 
+    /// <summary>
+    /// Hot-swaps the physical→virtual mapping on running forwarding pairs.
+    /// Does NOT touch HidHide, ViGEm connections, or forwarding threads.
+    /// </summary>
+    Task UpdateMappingAsync(IReadOnlyList<SlotAssignment> assignments);
+
     /// <summary>Full revert: stop forwarding, disconnect ViGEm controllers, unhide all devices.
     /// Called by "Revert All" to restore physical controllers.</summary>
     Task RevertAllAsync();

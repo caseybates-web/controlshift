@@ -11,6 +11,9 @@ public sealed record SlotAssignment
     /// <summary>HID device path of the source controller, or null if slot is empty.</summary>
     public string? SourceDevicePath { get; init; }
 
+    /// <summary>Physical XInput slot index (0–3) to read input from. -1 if unknown.</summary>
+    public int SourceSlotIndex { get; init; } = -1;
+
     /// <summary>Whether input forwarding is currently active for this slot.</summary>
     public bool IsForwarding { get; init; }
 }
