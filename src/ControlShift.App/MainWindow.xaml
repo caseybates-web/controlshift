@@ -71,7 +71,6 @@
                     Background="#107C10"
                     Foreground="White"
                     CornerRadius="2"
-                    Visibility="Collapsed"
                     Click="RevertButton_Click" />
             <Button x:Name="ExitButton"
                     Content="Exit ControlShift"

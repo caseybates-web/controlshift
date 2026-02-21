@@ -465,8 +465,7 @@ public sealed partial class MainWindow : Window
         foreach (var card in _cards)
             elements.Add(card);
 
-        if (RevertButton.Visibility == Visibility.Visible)
-            elements.Add(RevertButton);
+        elements.Add(RevertButton);
         elements.Add(ExitButton);
 
         return elements;
@@ -523,8 +522,6 @@ public sealed partial class MainWindow : Window
             _viewModel.ExcludedSlotIndices = _forwardingService.VirtualSlotIndices;
             NavLog($"[Forwarding] Started — virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
             DebugLog.Log($"[Forwarding] Started — {assignments.Count} assignments, virtual slots: [{string.Join(", ", _forwardingService.VirtualSlotIndices)}]");
-            if (RevertButton is not null)
-                RevertButton.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
         {
@@ -541,8 +538,9 @@ public sealed partial class MainWindow : Window
             _slotOrderStore.Clear();
             NavLog("[Forwarding] Reverted — ViGEm disconnected, physical order restored");
             DebugLog.Log("[Forwarding] Reverted — ViGEm disconnected, physical order restored");
-            if (RevertButton is not null)
-                RevertButton.Visibility = Visibility.Collapsed;
+            // Invalidate all caches so physical controllers reappear after HidHide clear.
+            _xinputEnum.InvalidateAll();
+            _hidEnum.InvalidateCache();
             _ = RefreshAsync();
         }
         catch (Exception ex)
@@ -557,8 +555,7 @@ public sealed partial class MainWindow : Window
         DebugLog.Log($"[Forwarding] Error on slot {e.TargetSlot} ({e.DevicePath}): {e.ErrorMessage}");
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_forwardingService.IsForwarding && RevertButton is not null)
-                RevertButton.Visibility = Visibility.Collapsed;
+            // RevertButton stays always visible — no need to toggle.
         });
     }
 

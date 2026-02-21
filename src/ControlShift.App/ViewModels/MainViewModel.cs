@@ -93,21 +93,23 @@ public sealed class MainViewModel
         }
         catch { /* diagnostic writes must never throw */ }
 
-        // Build VMs from matched data, excluding virtual controller slots.
+        // Build VMs from matched data, excluding virtual controller slots
+        // and disconnected slots (no empty cards).
         var vms = new List<SlotViewModel>(matched.Count);
         for (int i = 0; i < matched.Count; i++)
         {
             if (ExcludedSlotIndices.Contains(matched[i].SlotIndex))
+                continue;
+            if (!matched[i].IsConnected)
                 continue;
             var vm = new SlotViewModel(matched[i].SlotIndex);
             vm.UpdateFrom(matched[i]);
             vms.Add(vm);
         }
 
-        // Sort: integrated first → connected by slot index → disconnected.
+        // Sort: integrated first → then by slot index.
         var sorted = vms
             .OrderByDescending(v => v.IsIntegrated)
-            .ThenByDescending(v => v.IsConnected)
             .ThenBy(v => v.SlotIndex)
             .ToList();
 
