@@ -61,8 +61,8 @@ public class GamepadReportTests
     [Fact]
     public void GuideButton_0x0400_CanBeDetected()
     {
-        // The Guide button is at bit 10 (0x0400). This is the bit that
-        // ViGEmController must strip before forwarding.
+        // The Guide button is at bit 10 (0x0400). ViGEmController forwards
+        // it faithfully — ControlShift never intercepts Guide.
         const ushort guideButtonMask = 0x0400;
         var report = new GamepadReport(Buttons: guideButtonMask,
             LeftTrigger: 0, RightTrigger: 0,

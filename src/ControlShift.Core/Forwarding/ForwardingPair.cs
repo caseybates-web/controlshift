@@ -85,7 +85,9 @@ internal sealed class ForwardingPair : IDisposable
                     // Log button changes (not every frame) for diagnostics.
                     if (report.Buttons != prevButtons)
                     {
+                        ushort changed = (ushort)(report.Buttons ^ prevButtons);
                         DebugLog.Log($"[Forward] slot={_targetSlot} buttons=0x{report.Buttons:X4} (was 0x{prevButtons:X4})");
+                        InputTrace.Log($"[Forward] slot={_targetSlot} buttons=0x{report.Buttons:X4} was=0x{prevButtons:X4} changed=0x{changed:X4} [{InputTrace.ButtonNames(changed)}] rawLen={bytesRead}");
                         prevButtons = report.Buttons;
                     }
 

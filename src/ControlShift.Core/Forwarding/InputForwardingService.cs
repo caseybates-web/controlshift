@@ -63,6 +63,7 @@ public sealed class InputForwardingService : IInputForwardingService
             // Count how many non-null assignments need a ViGEm controller.
             int neededCount = assignments.Count(a => a.SourceDevicePath is not null);
             DiagLog($"Needed ViGEm count: {neededCount}, pool size: {_vigemPool.Count}");
+            InputTrace.Log($"[FwdSvc] StartForwardingAsync — {assignments.Count} assignments, pool={_vigemPool.Count}");
 
             // Create ViGEm pool on first call; grow if more controllers are needed.
             bool firstInit = _vigemClient == null;
@@ -160,12 +161,14 @@ public sealed class InputForwardingService : IInputForwardingService
                 }
                 DiagLog($"Virtual slots (snapshot diff): [{string.Join(", ", _virtualSlotIndices)}]");
                 DebugLog.Log($"[ViGEm] Virtual slots detected: [{string.Join(", ", _virtualSlotIndices)}]");
+                InputTrace.Log($"[FwdSvc] VirtualSlotIndices (snapshot diff): [{string.Join(", ", _virtualSlotIndices)}]");
             }
             else if (!poolGrew)
             {
                 // Pool reuse with no growth: cached values are correct.
                 // ViGEm controllers are persistent and their slots don't change.
                 DiagLog($"Virtual slots (cached): [{string.Join(", ", _virtualSlotIndices)}]");
+                InputTrace.Log($"[FwdSvc] VirtualSlotIndices (cached): [{string.Join(", ", _virtualSlotIndices)}]");
             }
 
             // Whitelist our own process so we can still see hidden devices.

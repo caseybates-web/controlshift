@@ -148,6 +148,7 @@ public sealed partial class MainWindow : Window
 
         NavLog($"MainWindow ctor — log: {NavLogPath}");
         DebugLog.Log("MainWindow created");
+        InputTrace.Init();
 
         string dbPath      = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-devices.json");
         string vendorsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "devices", "known-vendors.json");
@@ -701,10 +702,20 @@ public sealed partial class MainWindow : Window
         long repeatStartMs = 0;
         long repeatLastFireMs = 0;
 
+        // Input trace: per-slot previous button state for change detection
+        int traceTick = 0;
+        ushort[] trPrev = new ushort[4];
+        try
+        {
+            InputTrace.Log($"[Nav] Thread started — VirtualSlotIndices=[{string.Join(",", _forwardingService.VirtualSlotIndices)}]");
+        }
+        catch { /* race on startup */ }
+
         while (_navThreadRunning)
         {
             long frameStartMs = sw.ElapsedMilliseconds;
             Interlocked.Increment(ref _navTickCount);
+            traceTick++;
 
             if (!_windowActive)
             {
@@ -720,29 +731,60 @@ public sealed partial class MainWindow : Window
 
                 for (uint i = 0; i < 4; i++)
                 {
+                    bool isVirtual = false;
                     try
                     {
-                        if (_forwardingService.VirtualSlotIndices.Contains((int)i))
-                            continue;
+                        isVirtual = _forwardingService.VirtualSlotIndices.Contains((int)i);
                     }
-                    catch { continue; } // race with set modification — skip slot
+                    catch { isVirtual = true; } // race with set modification — treat as virtual
 
                     if (XInput.GetState(i, out State state))
                     {
-                        current |= state.Gamepad.Buttons;
-                        if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
-                            maxThumbY = state.Gamepad.LeftThumbY;
-                        if (Math.Abs(state.Gamepad.LeftThumbX) > Math.Abs(maxThumbX))
-                            maxThumbX = state.Gamepad.LeftThumbX;
+                        ushort btns = (ushort)state.Gamepad.Buttons;
+
+                        // Trace: log every per-slot button change (physical AND virtual)
+                        if (btns != trPrev[i])
+                        {
+                            ushort changed = (ushort)(btns ^ trPrev[i]);
+                            InputTrace.Log($"[Nav] slot={i} isVirtual={isVirtual} buttons=0x{btns:X4} was=0x{trPrev[i]:X4} changed=0x{changed:X4} [{InputTrace.ButtonNames(changed)}]");
+                            trPrev[i] = btns;
+                        }
+
+                        // Only aggregate PHYSICAL slots into nav input
+                        if (!isVirtual)
+                        {
+                            current |= state.Gamepad.Buttons;
+                            if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
+                                maxThumbY = state.Gamepad.LeftThumbY;
+                            if (Math.Abs(state.Gamepad.LeftThumbX) > Math.Abs(maxThumbX))
+                                maxThumbX = state.Gamepad.LeftThumbX;
+                        }
                     }
+                    else if (trPrev[i] != 0)
+                    {
+                        // Slot disconnected
+                        InputTrace.Log($"[Nav] slot={i} DISCONNECTED was=0x{trPrev[i]:X4} isVirtual={isVirtual}");
+                        trPrev[i] = 0;
+                    }
+                }
+
+                // Trace: periodic slot layout dump (~1/sec)
+                if (traceTick % 250 == 0)
+                {
+                    try
+                    {
+                        var vsi = _forwardingService.VirtualSlotIndices;
+                        InputTrace.Log($"[Nav:PERIODIC] VirtualSlotIndices=[{string.Join(",", vsi)}] s0=0x{trPrev[0]:X4} s1=0x{trPrev[1]:X4} s2=0x{trPrev[2]:X4} s3=0x{trPrev[3]:X4}");
+                    }
+                    catch { /* race */ }
                 }
 
                 long t0 = Stopwatch.GetTimestamp();
 
-                // Strip Guide button from nav input — the Xbox button should pass through
-                // to Windows/games naturally via the physical controller. ControlShift must
-                // never intercept it or let it trigger any UI navigation action.
-                current &= ~GamepadButtons.Guide;
+                // NOTE: Guide button (0x0400) is never present in `current` because
+                // Vortice.XInput uses standard XInputGetState (not the undocumented
+                // XInputGetStateEx ordinal #100). No stripping needed. Guide passes
+                // through to Windows untouched via the physical controller or ViGEm.
 
                 // ── Edge detection ────────────────────────────────────────────
                 var newPresses  = current     & ~prevButtons;
@@ -996,6 +1038,25 @@ public sealed partial class MainWindow : Window
         else if (btn == ExitButton) ExitButton_Click(btn, new RoutedEventArgs());
     }
 
+    /// <summary>
+    /// Returns true for any VirtualKey that originates from a gamepad.
+    /// These are suppressed in ContentGrid_KeyDown because NavInputThread
+    /// handles all gamepad input via direct XInput polling.
+    /// </summary>
+    private static bool IsGamepadVirtualKey(VirtualKey key) =>
+        key is VirtualKey.GamepadA or VirtualKey.GamepadB
+            or VirtualKey.GamepadX or VirtualKey.GamepadY
+            or VirtualKey.GamepadDPadUp or VirtualKey.GamepadDPadDown
+            or VirtualKey.GamepadDPadLeft or VirtualKey.GamepadDPadRight
+            or VirtualKey.GamepadLeftShoulder or VirtualKey.GamepadRightShoulder
+            or VirtualKey.GamepadLeftTrigger or VirtualKey.GamepadRightTrigger
+            or VirtualKey.GamepadLeftThumbstickUp or VirtualKey.GamepadLeftThumbstickDown
+            or VirtualKey.GamepadLeftThumbstickLeft or VirtualKey.GamepadLeftThumbstickRight
+            or VirtualKey.GamepadRightThumbstickUp or VirtualKey.GamepadRightThumbstickDown
+            or VirtualKey.GamepadRightThumbstickLeft or VirtualKey.GamepadRightThumbstickRight
+            or VirtualKey.GamepadMenu or VirtualKey.GamepadView
+            or VirtualKey.GamepadLeftThumbstickButton or VirtualKey.GamepadRightThumbstickButton;
+
     private void WatchdogTimer_Tick(object? sender, object e)
     {
         bool threadAlive = _navThread?.IsAlive ?? false;
@@ -1069,29 +1130,38 @@ public sealed partial class MainWindow : Window
     // ── Navigation: keyboard ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Root-Grid KeyDown handler — catches key events from any focused child.
-    /// Enter/Space = A, Escape = B, arrow keys move card in reorder mode.
-    /// Tab/Shift+Tab is handled by the WinUI 3 focus system automatically.
+    /// Root-Grid KeyDown handler — KEYBOARD ONLY.
+    /// All gamepad input (d-pad, A, B, View) is handled by the NavInputThread
+    /// via XInput polling. WinUI also fires GamepadDPad* / GamepadB KeyDown
+    /// events from its own XInput reads — but those would double-fire because
+    /// WinUI reads ALL controllers including ViGEm virtual ones. By handling
+    /// only keyboard VirtualKeys here, gamepad input flows through a single
+    /// path (NavInputThread) with correct virtual-slot exclusion.
     /// </summary>
     private void ContentGrid_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Suppress ALL gamepad VirtualKey events. NavInputThread handles gamepad
+        // input via direct XInput polling with proper virtual-slot exclusion.
+        // WinUI fires GamepadDPad*/GamepadA/GamepadB for EVERY connected controller
+        // including ViGEm virtual ones, causing phantom double/triple input.
+        if (IsGamepadVirtualKey(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (_reorderingIndex >= 0)
         {
             if (_isFullScreen)
             {
-                // Horizontal layout: left/right moves card
                 switch (e.Key)
                 {
                     case VirtualKey.Left:
-                    case VirtualKey.GamepadDPadLeft:
-                    case VirtualKey.GamepadLeftThumbstickLeft:
                         NavLog("[KeyDown] MoveReorderingCard(-1) [horiz]");
                         MoveReorderingCard(-1);
                         e.Handled = true;
                         break;
                     case VirtualKey.Right:
-                    case VirtualKey.GamepadDPadRight:
-                    case VirtualKey.GamepadLeftThumbstickRight:
                         NavLog("[KeyDown] MoveReorderingCard(+1) [horiz]");
                         MoveReorderingCard(+1);
                         e.Handled = true;
@@ -1103,7 +1173,6 @@ public sealed partial class MainWindow : Window
                         e.Handled = true;
                         break;
                     case VirtualKey.Escape:
-                    case VirtualKey.GamepadB:
                         NavLog("[KeyDown] CancelReorder");
                         CancelReorder();
                         e.Handled = true;
@@ -1112,19 +1181,14 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                // Vertical layout: up/down moves card
                 switch (e.Key)
                 {
                     case VirtualKey.Up:
-                    case VirtualKey.GamepadDPadUp:
-                    case VirtualKey.GamepadLeftThumbstickUp:
                         NavLog("[KeyDown] MoveReorderingCard(-1)");
                         MoveReorderingCard(-1);
                         e.Handled = true;
                         break;
                     case VirtualKey.Down:
-                    case VirtualKey.GamepadDPadDown:
-                    case VirtualKey.GamepadLeftThumbstickDown:
                         NavLog("[KeyDown] MoveReorderingCard(+1)");
                         MoveReorderingCard(+1);
                         e.Handled = true;
@@ -1136,7 +1200,6 @@ public sealed partial class MainWindow : Window
                         e.Handled = true;
                         break;
                     case VirtualKey.Escape:
-                    case VirtualKey.GamepadB:
                         NavLog("[KeyDown] CancelReorder");
                         CancelReorder();
                         e.Handled = true;

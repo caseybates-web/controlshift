@@ -1,6 +1,7 @@
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
+using ControlShift.Core.Diagnostics;
 
 namespace ControlShift.Core.Devices;
 
@@ -16,6 +17,7 @@ public sealed class ViGEmController : IViGEmController
     private readonly IXbox360Controller _controller;
     private bool _connected;
     private bool _disposed;
+    private ushort _prevTraceButtons;  // input trace: Guide edge detection
 
     public ViGEmController(ViGEmClient client)
     {
@@ -85,6 +87,14 @@ public sealed class ViGEmController : IViGEmController
         _controller.SetAxisValue(Xbox360Axis.RightThumbY, r.ThumbRY);
 
         _controller.SubmitReport();
+
+        // Input trace: log button changes with button names.
+        if (buttons != _prevTraceButtons)
+        {
+            ushort changed = (ushort)(buttons ^ _prevTraceButtons);
+            InputTrace.Log($"[ViGEm] buttons=0x{buttons:X4} was=0x{_prevTraceButtons:X4} changed=0x{changed:X4} [{InputTrace.ButtonNames(changed)}]");
+            _prevTraceButtons = buttons;
+        }
     }
 
     public void Dispose()
