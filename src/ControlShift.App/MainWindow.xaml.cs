@@ -199,6 +199,7 @@ public sealed partial class MainWindow : Window
 
         // Initial scan on window open.
         _ = RefreshAsync();
+        RefreshWindowsSees();
     }
 
     // ── Navigation: deferred setup ────────────────────────────────────────────
@@ -1145,6 +1146,7 @@ public sealed partial class MainWindow : Window
 
         _ = ApplyForwardingAsync();
         SaveCurrentOrder();
+        RefreshWindowsSees();
     }
 
     private void CancelReorder()
@@ -1388,6 +1390,27 @@ public sealed partial class MainWindow : Window
     private static extern uint RawXInputGetBatteryInformation(
         uint dwUserIndex, byte devType, out XINPUT_BATTERY_INFORMATION pBatteryInformation);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XINPUT_VIBRATION
+    {
+        public ushort wLeftMotorSpeed;
+        public ushort wRightMotorSpeed;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XINPUT_CAPABILITIES
+    {
+        public byte Type;
+        public byte SubType;
+        public ushort Flags;
+        public XINPUT_GAMEPAD Gamepad;
+        public XINPUT_VIBRATION Vibration;
+    }
+
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputGetCapabilities")]
+    private static extern uint RawXInputGetCapabilities(
+        uint dwUserIndex, uint dwFlags, out XINPUT_CAPABILITIES pCapabilities);
+
     private static void WriteXInputDiagnostic()
     {
         const uint ERROR_SUCCESS                 = 0;
@@ -1447,6 +1470,55 @@ public sealed partial class MainWindow : Window
             System.IO.File.WriteAllText(dumpPath, sb.ToString());
         }
         catch { /* diagnostic writes must never throw */ }
+    }
+
+    // ── "What Windows Sees" panel ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Reads raw XInput state via P/Invoke, bypassing all ControlShift logic,
+    /// and updates the 4 status lines in the footer panel.
+    /// </summary>
+    private void RefreshWindowsSees()
+    {
+        const uint ERROR_SUCCESS = 0;
+        const uint XINPUT_FLAG_GAMEPAD = 0x00000001;
+
+        TextBlock[] rows = { WindowsSeesP1, WindowsSeesP2, WindowsSeesP3, WindowsSeesP4 };
+
+        for (uint i = 0; i < 4; i++)
+        {
+            uint rc = RawXInputGetState(i, out _);
+            if (rc == ERROR_SUCCESS)
+            {
+                string name = "Controller";
+                uint capRc = RawXInputGetCapabilities(i, XINPUT_FLAG_GAMEPAD, out XINPUT_CAPABILITIES caps);
+                if (capRc == ERROR_SUCCESS)
+                {
+                    name = caps.SubType switch
+                    {
+                        0x01 => "Gamepad",
+                        0x02 => "Wheel",
+                        0x03 => "Arcade Stick",
+                        0x04 => "Flight Stick",
+                        0x05 => "Dance Pad",
+                        0x06 => "Guitar",
+                        0x08 => "Drum Kit",
+                        _ => "Controller",
+                    };
+                    bool wireless = (caps.Flags & 0x0002) != 0;
+                    if (wireless) name += " (Wireless)";
+                }
+                rows[i].Text = $"\u2B24  P{i + 1}: {name}";
+                rows[i].Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x10, 0x7C, 0x10));
+            }
+            else
+            {
+                rows[i].Text = $"\u2B24  P{i + 1}: Empty";
+                rows[i].Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)
+                    Application.Current.Resources["XbTextMutedBrush"];
+            }
+        }
     }
 
     // ── WM_DEVICECHANGE hook ────────────────────────────────────────────────
@@ -1523,6 +1595,7 @@ public sealed partial class MainWindow : Window
                 await RefreshAsync();
                 int countAfter = _cards.Count;
                 DebugLog.DeviceChange(countBefore, countAfter);
+                RefreshWindowsSees();
             };
         }
 

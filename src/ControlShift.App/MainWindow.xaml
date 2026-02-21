@@ -62,8 +62,28 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Footer: Revert All + Exit -->
+        <!-- Footer: "What Windows Sees" panel + Revert All + Exit -->
         <StackPanel x:Name="FooterPanel" Grid.Row="2" HorizontalAlignment="Center" Spacing="4" Padding="0,8,0,0">
+
+            <!-- What Windows Sees: raw XInput state bypassing all ControlShift logic -->
+            <Border Background="#222222" BorderBrush="#333333" BorderThickness="1" CornerRadius="4"
+                    Padding="10,6" HorizontalAlignment="Center" Margin="0,0,0,4">
+                <StackPanel>
+                    <TextBlock Text="What Windows Sees"
+                               FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold"
+                               Foreground="{StaticResource XbTextMutedBrush}"
+                               Margin="0,0,0,4" />
+                    <TextBlock x:Name="WindowsSeesP1" FontFamily="Segoe UI" FontSize="11"
+                               Foreground="{StaticResource XbTextMutedBrush}" />
+                    <TextBlock x:Name="WindowsSeesP2" FontFamily="Segoe UI" FontSize="11"
+                               Foreground="{StaticResource XbTextMutedBrush}" />
+                    <TextBlock x:Name="WindowsSeesP3" FontFamily="Segoe UI" FontSize="11"
+                               Foreground="{StaticResource XbTextMutedBrush}" />
+                    <TextBlock x:Name="WindowsSeesP4" FontFamily="Segoe UI" FontSize="11"
+                               Foreground="{StaticResource XbTextMutedBrush}" />
+                </StackPanel>
+            </Border>
+
             <Button x:Name="RevertButton"
                     Content="Revert All"
                     HorizontalAlignment="Center"
