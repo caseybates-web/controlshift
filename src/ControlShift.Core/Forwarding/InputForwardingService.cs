@@ -179,6 +179,10 @@ public sealed class InputForwardingService : IInputForwardingService
                 _hidHide.AddApplicationRule(exePath);
             }
 
+            // Whitelist Xbox Game Bar processes so the Guide button still
+            // reaches Windows when physical controllers are hidden.
+            AllowlistGameBarProcesses();
+
             var createdPairs = new List<ForwardingPair>();
 
             try
@@ -373,6 +377,54 @@ public sealed class InputForwardingService : IInputForwardingService
                 occupied.Add(i);
         }
         return occupied;
+    }
+
+    /// <summary>
+    /// Adds Xbox Game Bar executables to the HidHide allowlist so the Guide
+    /// button on physical controllers still reaches Windows when hidden.
+    /// </summary>
+    private void AllowlistGameBarProcesses()
+    {
+        // GameBarPresenceWriter in System32 — always at a fixed path.
+        TryAllowlist(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "GameBarPresenceWriter.exe"));
+
+        // GameBar, GameBarFTServer, GameBarElevatedFT live in the versioned
+        // WindowsApps folder. Resolve the wildcard directory at runtime.
+        try
+        {
+            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            var appsDir = Path.Combine(programFiles, "WindowsApps");
+            if (Directory.Exists(appsDir))
+            {
+                var overlayDirs = Directory.GetDirectories(appsDir, "Microsoft.XboxGamingOverlay_*");
+                foreach (var dir in overlayDirs)
+                {
+                    TryAllowlist(Path.Combine(dir, "GameBar.exe"));
+                    TryAllowlist(Path.Combine(dir, "GameBarFTServer.exe"));
+                    TryAllowlist(Path.Combine(dir, "GameBarElevatedFT.exe"));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            DiagLog($"GameBar allowlist scan failed: {ex.Message}");
+        }
+    }
+
+    private void TryAllowlist(string path)
+    {
+        if (!File.Exists(path)) return;
+        try
+        {
+            _hidHide.AddApplicationRule(path);
+            DiagLog($"HidHide allowlist (GameBar): {path}");
+        }
+        catch (Exception ex)
+        {
+            DiagLog($"HidHide allowlist failed for {path}: {ex.Message}");
+        }
     }
 
     private void OnForwardingError(ForwardingErrorEventArgs e)
