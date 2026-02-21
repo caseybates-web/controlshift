@@ -1,5 +1,6 @@
 using HidSharp;
 using ControlShift.Core.Devices;
+using ControlShift.Core.Diagnostics;
 
 namespace ControlShift.Core.Forwarding;
 
@@ -70,6 +71,7 @@ internal sealed class ForwardingPair : IDisposable
         _hidStream.ReadTimeout = 8;
 
         byte[] buffer = new byte[64];
+        ushort prevButtons = 0;
 
         while (!_cts.IsCancellationRequested)
         {
@@ -79,6 +81,14 @@ internal sealed class ForwardingPair : IDisposable
                 if (bytesRead > 0)
                 {
                     var report = HidReportParser.Parse(buffer.AsSpan(0, bytesRead));
+
+                    // Log button changes (not every frame) for diagnostics.
+                    if (report.Buttons != prevButtons)
+                    {
+                        DebugLog.Log($"[Forward] slot={_targetSlot} buttons=0x{report.Buttons:X4} (was 0x{prevButtons:X4})");
+                        prevButtons = report.Buttons;
+                    }
+
                     _vigem.SubmitReport(report);
                 }
             }

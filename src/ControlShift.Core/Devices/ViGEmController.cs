@@ -1,6 +1,7 @@
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
+using ControlShift.Core.Diagnostics;
 
 namespace ControlShift.Core.Devices;
 
@@ -52,22 +53,29 @@ public sealed class ViGEmController : IViGEmController
     {
         if (!_connected) return;
 
+        // Strip the Guide button (0x0400) — forwarding it through ViGEm
+        // triggers the Windows Xbox Game Bar / task switcher.
+        ushort buttons = (ushort)(r.Buttons & ~0x0400);
+
+        if ((r.Buttons & 0x0400) != 0)
+            DebugLog.Log($"[ViGEm] Guide button BLOCKED (raw buttons=0x{r.Buttons:X4})");
+
         // Buttons — standard Xbox 360 bitmask mapping.
-        _controller.SetButtonState(Xbox360Button.Up,             (r.Buttons & 0x0001) != 0);
-        _controller.SetButtonState(Xbox360Button.Down,           (r.Buttons & 0x0002) != 0);
-        _controller.SetButtonState(Xbox360Button.Left,           (r.Buttons & 0x0004) != 0);
-        _controller.SetButtonState(Xbox360Button.Right,          (r.Buttons & 0x0008) != 0);
-        _controller.SetButtonState(Xbox360Button.Start,          (r.Buttons & 0x0010) != 0);
-        _controller.SetButtonState(Xbox360Button.Back,           (r.Buttons & 0x0020) != 0);
-        _controller.SetButtonState(Xbox360Button.LeftThumb,      (r.Buttons & 0x0040) != 0);
-        _controller.SetButtonState(Xbox360Button.RightThumb,     (r.Buttons & 0x0080) != 0);
-        _controller.SetButtonState(Xbox360Button.LeftShoulder,   (r.Buttons & 0x0100) != 0);
-        _controller.SetButtonState(Xbox360Button.RightShoulder,  (r.Buttons & 0x0200) != 0);
-        _controller.SetButtonState(Xbox360Button.Guide,          (r.Buttons & 0x0400) != 0);
-        _controller.SetButtonState(Xbox360Button.A,              (r.Buttons & 0x1000) != 0);
-        _controller.SetButtonState(Xbox360Button.B,              (r.Buttons & 0x2000) != 0);
-        _controller.SetButtonState(Xbox360Button.X,              (r.Buttons & 0x4000) != 0);
-        _controller.SetButtonState(Xbox360Button.Y,              (r.Buttons & 0x8000) != 0);
+        _controller.SetButtonState(Xbox360Button.Up,             (buttons & 0x0001) != 0);
+        _controller.SetButtonState(Xbox360Button.Down,           (buttons & 0x0002) != 0);
+        _controller.SetButtonState(Xbox360Button.Left,           (buttons & 0x0004) != 0);
+        _controller.SetButtonState(Xbox360Button.Right,          (buttons & 0x0008) != 0);
+        _controller.SetButtonState(Xbox360Button.Start,          (buttons & 0x0010) != 0);
+        _controller.SetButtonState(Xbox360Button.Back,           (buttons & 0x0020) != 0);
+        _controller.SetButtonState(Xbox360Button.LeftThumb,      (buttons & 0x0040) != 0);
+        _controller.SetButtonState(Xbox360Button.RightThumb,     (buttons & 0x0080) != 0);
+        _controller.SetButtonState(Xbox360Button.LeftShoulder,   (buttons & 0x0100) != 0);
+        _controller.SetButtonState(Xbox360Button.RightShoulder,  (buttons & 0x0200) != 0);
+        _controller.SetButtonState(Xbox360Button.Guide,          false); // never forward Guide
+        _controller.SetButtonState(Xbox360Button.A,              (buttons & 0x1000) != 0);
+        _controller.SetButtonState(Xbox360Button.B,              (buttons & 0x2000) != 0);
+        _controller.SetButtonState(Xbox360Button.X,              (buttons & 0x4000) != 0);
+        _controller.SetButtonState(Xbox360Button.Y,              (buttons & 0x8000) != 0);
 
         // Triggers
         _controller.SetSliderValue(Xbox360Slider.LeftTrigger,  r.LeftTrigger);

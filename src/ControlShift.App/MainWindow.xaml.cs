@@ -687,6 +687,10 @@ public sealed partial class MainWindow : Window
                 }
             }
 
+            // Log if Guide button is ever seen — should never happen with virtual slot exclusion.
+            if ((current & GamepadButtons.Guide) != 0)
+                DebugLog.Log($"[NavTimer] GUIDE BUTTON DETECTED in XInput aggregate! buttons=0x{(ushort)current:X4}");
+
             GamepadButtons newPresses  = current            & ~_prevGamepadButtons;
             GamepadButtons newReleases = _prevGamepadButtons & ~current;
             _prevGamepadButtons = current;
