@@ -29,7 +29,10 @@ public sealed partial class MainWindow : Window
 
     private const int    WindowWidth             = 400;
     private const int    WindowHeight            = 700;
-    private const double UiPollIntervalMs        = 16.0;   // ~60 fps for gamepad input
+    private const double UiPollIntervalMs        = 16.0;   // ~60 fps for hold timer
+    private const int    NavPollIntervalMs       = 4;      // 250Hz XInput thread polling
+    private const int    RepeatInitialDelayMs    = 300;    // d-pad repeat: initial delay
+    private const int    RepeatIntervalMs        = 80;     // d-pad repeat: interval (Xbox feel)
     private const double DevicePollSeconds       = 5.0;    // device enumeration refresh
     private const double WatchdogIntervalSeconds = 5.0;    // nav timer health check
     private const short  StickDeadzoneThreshold  = 8192;   // ~25% of ±32768 range
@@ -63,24 +66,38 @@ public sealed partial class MainWindow : Window
     /// <summary>Snapshot of _cards when reorder mode was entered, for snap-back on cancel.</summary>
     private readonly List<SlotCard> _savedOrder = new();
 
-    // ── XInput polling ────────────────────────────────────────────────────────
+    // ── XInput polling (dedicated thread) ───────────────────────────────────
 
-    private readonly DispatcherTimer _navTimer;
+    [Flags]
+    private enum NavAction : ushort
+    {
+        None        = 0,
+        Up          = 1 << 0,
+        Down        = 1 << 1,
+        Left        = 1 << 2,
+        Right       = 1 << 3,
+        APressed    = 1 << 4,
+        AReleased   = 1 << 5,
+        BPressed    = 1 << 6,
+        ViewPressed = 1 << 7,
+    }
+
+    private readonly record struct NavInputFrame(NavAction Actions, long T0Ticks);
+
+    private Thread? _navThread;
+    private volatile bool _navThreadRunning;
+    private Microsoft.UI.Dispatching.DispatcherQueue? _uiDispatcher;
     private readonly DispatcherTimer _watchdogTimer;
-    private          GamepadButtons  _prevGamepadButtons;
-    private          short           _prevLeftThumbY;
-    private          short           _prevLeftThumbX;
-    private          bool            _prevViewButton;
-    private          bool            _windowActive = true;
+    private volatile bool _windowActive = true;
 
     // Full-screen / layout mode
     private bool   _isFullScreen;
     private double _layoutScale = 1.0;
 
-    // A-button hold/tap state
+    // A-button hold/tap state (UI thread only)
     private DateTime? _aHoldStart;           // when A was first pressed; null when not held
     private bool      _aHoldEnteredReorder;  // true once the 500ms threshold was crossed
-    private int       _navTickCount;         // total ticks; reset by watchdog every 5s
+    private int       _navTickCount;         // incremented by nav thread; reset by watchdog
     private int       _holdTickCount;        // hold-timer ticks since last A press; reset on release/cancel/confirm
 
     // Dedicated timer for hold-A progress bar animation.
@@ -100,6 +117,12 @@ public sealed partial class MainWindow : Window
         System.IO.Path.Combine(
             System.IO.Path.GetTempPath(),
             $"ControlShift-nav-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+
+    // Latency measurement log — first 20 button presses.
+    private static readonly string LatencyLogPath =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "controlshift-nav-latency.log");
+    private int _latencyLogCount;
+    private const int MaxLatencyLogs = 20;
 
     private static readonly object _logLock = new();
 
@@ -167,19 +190,27 @@ public sealed partial class MainWindow : Window
         };
         _pollTimer.Start();
 
-        // Poll XInput at ~60 fps for A/B buttons and D-pad navigation.
-        // DispatcherTimer fires on the UI thread, so no DispatcherQueue.TryEnqueue needed.
-        _navTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(UiPollIntervalMs) };
-        _navTimer.Tick += NavTimer_Tick;
-        _navTimer.Start();
+        // Dedicated thread for XInput polling at 250Hz.
+        // DispatcherTimer is low-priority and gets delayed by UI work.
+        // A dedicated thread with TryEnqueue guarantees consistent input latency.
+        _uiDispatcher = this.DispatcherQueue;
+        _navThreadRunning = true;
+        _navThread = new Thread(NavInputThread_Run)
+        {
+            Name = "NavInput",
+            IsBackground = true,
+            Priority = ThreadPriority.AboveNormal,
+        };
+        _navThread.Start();
+
+        // Clear latency log for fresh measurement each session.
+        try { System.IO.File.WriteAllText(LatencyLogPath, ""); } catch { }
 
         // ONE hold timer — created here, reused for every A press, never recreated.
         _holdTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(UiPollIntervalMs) };
         _holdTimer.Tick += HoldTimer_Tick;
 
-        // Watchdog: every 5s verify the nav timer is still running and restart if not.
-        // Guards against any scenario where the timer silently stops (driver errors,
-        // unhandled exceptions escaping the catch, or unexpected Stop() calls).
+        // Watchdog: every 5s verify the nav thread is still alive and restart if dead.
         _watchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(WatchdogIntervalSeconds) };
         _watchdogTimer.Tick += WatchdogTimer_Tick;
         _watchdogTimer.Start();
@@ -481,7 +512,7 @@ public sealed partial class MainWindow : Window
     private void ExitButton_Click(object sender, RoutedEventArgs e)
     {
         _pollTimer.Stop();
-        _navTimer.Stop();
+        StopNavThread();
         this.Close();
     }
 
@@ -489,10 +520,17 @@ public sealed partial class MainWindow : Window
     {
         DebugLog.Shutdown("window closed");
         _pollTimer.Stop();
-        _navTimer.Stop();
+        StopNavThread();
         _watchdogTimer.Stop();
         _holdTimer.Stop();
         _forwardingService.Dispose();
+    }
+
+    private void StopNavThread()
+    {
+        _navThreadRunning = false;
+        _navThread?.Join(500);
+        _navThread = null;
     }
 
     // ── Forwarding ────────────────────────────────────────────────────────────
@@ -643,200 +681,249 @@ public sealed partial class MainWindow : Window
         return slotMap;
     }
 
-    // ── Navigation: XInput polling ────────────────────────────────────────────
+    // ── Navigation: XInput polling (background thread) ─────────────────────
 
-    private void NavTimer_Tick(object? sender, object e)
+    /// <summary>
+    /// Background thread: polls XInput at 250Hz, detects edges and d-pad repeat,
+    /// dispatches NavAction frames to the UI thread via DispatcherQueue.
+    /// Runs entirely off the UI thread — only P/Invoke calls, no UI side-effects.
+    /// </summary>
+    private void NavInputThread_Run()
     {
-        NavLog($"NAV#{_navTickCount} windowActive={_windowActive} " +
-               $"focused={_focusedElement?.GetType().Name ?? "null"} reorderIdx={_reorderingIndex} " +
-               $"holdTick={_holdTickCount} aHoldStart={_aHoldStart.HasValue} " +
-               $"aEnteredReorder={_aHoldEnteredReorder} suppress={_suppressFocusEvents} " +
-               $"cardCount={_cards.Count}");
-        _navTickCount++;
+        var sw = Stopwatch.StartNew();
+
+        GamepadButtons prevButtons = default;
+        short prevThumbY = 0, prevThumbX = 0;
+        bool prevView = false;
+
+        // D-pad repeat state
+        NavAction repeatDir = NavAction.None;
+        long repeatStartMs = 0;
+        long repeatLastFireMs = 0;
+
+        while (_navThreadRunning)
+        {
+            long frameStartMs = sw.ElapsedMilliseconds;
+            Interlocked.Increment(ref _navTickCount);
+
+            if (!_windowActive)
+            {
+                Thread.Sleep(50);
+                continue;
+            }
+
+            try
+            {
+                // ── Read XInput state ──────────────────────────────────────────
+                GamepadButtons current = default;
+                short maxThumbY = 0, maxThumbX = 0;
+
+                for (uint i = 0; i < 4; i++)
+                {
+                    try
+                    {
+                        if (_forwardingService.VirtualSlotIndices.Contains((int)i))
+                            continue;
+                    }
+                    catch { continue; } // race with set modification — skip slot
+
+                    if (XInput.GetState(i, out State state))
+                    {
+                        current |= state.Gamepad.Buttons;
+                        if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
+                            maxThumbY = state.Gamepad.LeftThumbY;
+                        if (Math.Abs(state.Gamepad.LeftThumbX) > Math.Abs(maxThumbX))
+                            maxThumbX = state.Gamepad.LeftThumbX;
+                    }
+                }
+
+                long t0 = Stopwatch.GetTimestamp();
+
+                if ((current & GamepadButtons.Guide) != 0)
+                    DebugLog.Log($"[NavThread] GUIDE BUTTON in XInput! buttons=0x{(ushort)current:X4}");
+
+                // ── Edge detection ────────────────────────────────────────────
+                var newPresses  = current     & ~prevButtons;
+                var newReleases = prevButtons  & ~current;
+                prevButtons = current;
+
+                bool stickUp    = maxThumbY >  StickDeadzoneThreshold && prevThumbY <=  StickDeadzoneThreshold;
+                bool stickDown  = maxThumbY < -StickDeadzoneThreshold && prevThumbY >= -StickDeadzoneThreshold;
+                prevThumbY = maxThumbY;
+
+                bool stickLeft  = maxThumbX < -StickDeadzoneThreshold && prevThumbX >= -StickDeadzoneThreshold;
+                bool stickRight = maxThumbX >  StickDeadzoneThreshold && prevThumbX <=  StickDeadzoneThreshold;
+                prevThumbX = maxThumbX;
+
+                NavAction actions = NavAction.None;
+
+                if ((newPresses & GamepadButtons.DPadUp)    != 0 || stickUp)    actions |= NavAction.Up;
+                if ((newPresses & GamepadButtons.DPadDown)  != 0 || stickDown)  actions |= NavAction.Down;
+                if ((newPresses & GamepadButtons.DPadLeft)  != 0 || stickLeft)  actions |= NavAction.Left;
+                if ((newPresses & GamepadButtons.DPadRight) != 0 || stickRight) actions |= NavAction.Right;
+                if ((newPresses & GamepadButtons.A)  != 0)  actions |= NavAction.APressed;
+                if ((newReleases & GamepadButtons.A) != 0)  actions |= NavAction.AReleased;
+                if ((newPresses & GamepadButtons.B)  != 0)  actions |= NavAction.BPressed;
+
+                bool viewNow = (current & GamepadButtons.Back) != 0;
+                if (viewNow && !prevView) actions |= NavAction.ViewPressed;
+                prevView = viewNow;
+
+                // ── D-pad / stick repeat ─────────────────────────────────────
+                NavAction heldDir = NavAction.None;
+                if ((current & GamepadButtons.DPadUp)    != 0) heldDir = NavAction.Up;
+                else if ((current & GamepadButtons.DPadDown)  != 0) heldDir = NavAction.Down;
+                else if ((current & GamepadButtons.DPadLeft)  != 0) heldDir = NavAction.Left;
+                else if ((current & GamepadButtons.DPadRight) != 0) heldDir = NavAction.Right;
+                else if (maxThumbY >  StickDeadzoneThreshold) heldDir = NavAction.Up;
+                else if (maxThumbY < -StickDeadzoneThreshold) heldDir = NavAction.Down;
+                else if (maxThumbX < -StickDeadzoneThreshold) heldDir = NavAction.Left;
+                else if (maxThumbX >  StickDeadzoneThreshold) heldDir = NavAction.Right;
+
+                if (heldDir != NavAction.None)
+                {
+                    if (heldDir != repeatDir)
+                    {
+                        // New direction — start tracking (initial press fires via edge detection)
+                        repeatDir = heldDir;
+                        repeatStartMs = frameStartMs;
+                        repeatLastFireMs = frameStartMs;
+                    }
+                    else
+                    {
+                        long heldMs = frameStartMs - repeatStartMs;
+                        if (heldMs >= RepeatInitialDelayMs)
+                        {
+                            long sinceLast = frameStartMs - repeatLastFireMs;
+                            if (sinceLast >= RepeatIntervalMs)
+                            {
+                                actions |= heldDir;
+                                repeatLastFireMs = frameStartMs;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    repeatDir = NavAction.None;
+                }
+
+                // ── Dispatch to UI thread ────────────────────────────────────
+                if (actions != NavAction.None)
+                {
+                    var frame = new NavInputFrame(actions, t0);
+                    _uiDispatcher?.TryEnqueue(() => HandleNavInput(frame));
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog.Exception("NavInputThread", ex);
+            }
+
+            // Sleep to next poll — target 4ms (250Hz)
+            int elapsed = (int)(sw.ElapsedMilliseconds - frameStartMs);
+            int sleepMs = NavPollIntervalMs - elapsed;
+            if (sleepMs > 0)
+                Thread.Sleep(sleepMs);
+            else
+                Thread.Yield();
+        }
+    }
+
+    /// <summary>
+    /// UI thread handler: processes nav actions dispatched from the XInput polling thread.
+    /// All Focus(), MoveReorderingCard(), and visual state changes happen here.
+    /// </summary>
+    private void HandleNavInput(NavInputFrame frame)
+    {
+        long t1 = Stopwatch.GetTimestamp();
 
         try
         {
             if (!_windowActive) return;
 
-            // ── Phase 1: read XInput state (pure P/Invoke, no UI side-effects) ──────
+            bool navUp    = (frame.Actions & NavAction.Up)    != 0;
+            bool navDown  = (frame.Actions & NavAction.Down)  != 0;
+            bool navLeft  = (frame.Actions & NavAction.Left)  != 0;
+            bool navRight = (frame.Actions & NavAction.Right) != 0;
+            bool aPressed = (frame.Actions & NavAction.APressed)  != 0;
+            bool aReleased= (frame.Actions & NavAction.AReleased) != 0;
+            bool bPressed = (frame.Actions & NavAction.BPressed)  != 0;
+            bool viewPressed = (frame.Actions & NavAction.ViewPressed) != 0;
 
-            GamepadButtons current   = default;
-            short          maxThumbY = 0;
-            short          maxThumbX = 0;
-
-            for (uint i = 0; i < 4; i++)
-            {
-                // Skip virtual ViGEm slots — reading them would double-count
-                // physical input that's being forwarded, causing phantom button presses.
-                if (_forwardingService.VirtualSlotIndices.Contains((int)i))
-                    continue;
-
-                bool stateOk = XInput.GetState(i, out State state);
-                if (stateOk)
-                {
-                    current |= state.Gamepad.Buttons;
-                    if (Math.Abs(state.Gamepad.LeftThumbY) > Math.Abs(maxThumbY))
-                        maxThumbY = state.Gamepad.LeftThumbY;
-                    if (Math.Abs(state.Gamepad.LeftThumbX) > Math.Abs(maxThumbX))
-                        maxThumbX = state.Gamepad.LeftThumbX;
-                }
-            }
-
-            // Log if Guide button is ever seen — should never happen with virtual slot exclusion.
-            if ((current & GamepadButtons.Guide) != 0)
-                DebugLog.Log($"[NavTimer] GUIDE BUTTON DETECTED in XInput aggregate! buttons=0x{(ushort)current:X4}");
-
-            GamepadButtons newPresses  = current            & ~_prevGamepadButtons;
-            GamepadButtons newReleases = _prevGamepadButtons & ~current;
-            _prevGamepadButtons = current;
-
-            bool stickUp   = maxThumbY >  StickDeadzoneThreshold && _prevLeftThumbY <=  StickDeadzoneThreshold;
-            bool stickDown = maxThumbY < -StickDeadzoneThreshold && _prevLeftThumbY >= -StickDeadzoneThreshold;
-            _prevLeftThumbY = maxThumbY;
-
-            bool stickLeft  = maxThumbX < -StickDeadzoneThreshold && _prevLeftThumbX >= -StickDeadzoneThreshold;
-            bool stickRight = maxThumbX >  StickDeadzoneThreshold && _prevLeftThumbX <=  StickDeadzoneThreshold;
-            _prevLeftThumbX = maxThumbX;
-
-            bool navUp        = (newPresses  & GamepadButtons.DPadUp)   != 0 || stickUp;
-            bool navDown      = (newPresses  & GamepadButtons.DPadDown)  != 0 || stickDown;
-            bool navLeft      = (newPresses  & GamepadButtons.DPadLeft)  != 0 || stickLeft;
-            bool navRight     = (newPresses  & GamepadButtons.DPadRight) != 0 || stickRight;
-            bool pressB       = (newPresses  & GamepadButtons.B)         != 0;
-            bool aJustPressed = (newPresses  & GamepadButtons.A)         != 0;
-            bool aJustReleased= (newReleases & GamepadButtons.A)         != 0;
-
-            // View button (Back) edge detection → toggle full-screen
-            bool viewNow = (current & GamepadButtons.Back) != 0;
-            if (viewNow && !_prevViewButton && _reorderingIndex < 0)
+            // View button → toggle full-screen
+            if (viewPressed && _reorderingIndex < 0)
                 ToggleFullScreen();
-            _prevViewButton = viewNow;
 
-            // ── Phase 2: UI mutations ─────────────────────────────────────────────────
+            string? focusTarget = null; // for latency logging
 
             if (_reorderingIndex >= 0)
             {
-                // ── Reorder mode: d-pad/stick moves card; A confirms; B cancels ──────
+                // ── Reorder mode: d-pad/stick moves card; A confirms; B cancels ──
                 if (_isFullScreen)
                 {
-                    // Horizontal layout: left/right moves card
-                    if (navLeft)  { NavLog("[NavTick] → MoveReorderingCard(-1) [horiz]"); MoveReorderingCard(-1); }
-                    if (navRight) { NavLog("[NavTick] → MoveReorderingCard(+1) [horiz]"); MoveReorderingCard(+1); }
+                    if (navLeft)  MoveReorderingCard(-1);
+                    if (navRight) MoveReorderingCard(+1);
                 }
                 else
                 {
-                    // Vertical layout: up/down moves card
-                    if (navUp)    { NavLog("[NavTick] → MoveReorderingCard(-1)"); MoveReorderingCard(-1); }
-                    if (navDown)  { NavLog("[NavTick] → MoveReorderingCard(+1)"); MoveReorderingCard(+1); }
+                    if (navUp)   MoveReorderingCard(-1);
+                    if (navDown) MoveReorderingCard(+1);
                 }
-                if (aJustPressed) { NavLog("[NavTick] → ConfirmReorder");         ConfirmReorder(); }
-                if (pressB)       { NavLog("[NavTick] → CancelReorder");          CancelReorder(); }
+                if (aPressed) ConfirmReorder();
+                if (bPressed) CancelReorder();
             }
             else
             {
-                // ── Normal mode: d-pad/stick moves focus through flat element list ───
+                // ── Normal mode: d-pad/stick moves focus ──────────────────────
                 var elements = GetFocusableElementsInOrder();
                 int curIdx = _focusedElement is not null ? elements.IndexOf(_focusedElement) : -1;
 
                 if (_isFullScreen)
                 {
-                    // Layout zones in elements list:
-                    //   [0] = FullScreenToggle (header)
-                    //   [1.._cards.Count] = cards (horizontal row)
-                    //   [_cards.Count+1..] = footer buttons (RevertAll, Exit)
                     int fsCardIdx = FocusedCardIndex;
                     int footerStart = 1 + _cards.Count;
 
-                    // Left/right between cards
                     if (navLeft && fsCardIdx > 0)
-                    {
-                        NavLog($"[NavTick] → Focus card {fsCardIdx - 1} (left)");
-                        _cards[fsCardIdx - 1].Focus(FocusState.Programmatic);
-                    }
+                        { _cards[fsCardIdx - 1].Focus(FocusState.Programmatic); focusTarget = $"card[{fsCardIdx - 1}]"; }
                     if (navRight && fsCardIdx >= 0 && fsCardIdx < _cards.Count - 1)
-                    {
-                        NavLog($"[NavTick] → Focus card {fsCardIdx + 1} (right)");
-                        _cards[fsCardIdx + 1].Focus(FocusState.Programmatic);
-                    }
+                        { _cards[fsCardIdx + 1].Focus(FocusState.Programmatic); focusTarget = $"card[{fsCardIdx + 1}]"; }
 
-                    // Down from header → first card
                     if (navDown && curIdx == 0 && _cards.Count > 0)
-                    {
-                        NavLog("[NavTick] → Focus card 0 (down from header)");
-                        _cards[0].Focus(FocusState.Programmatic);
-                    }
-                    // Down from card row → first footer button
-                    else if (navDown && fsCardIdx >= 0)
-                    {
-                        if (footerStart < elements.Count)
-                        {
-                            NavLog("[NavTick] → Focus footer button (down from card)");
-                            elements[footerStart].Focus(FocusState.Programmatic);
-                        }
-                    }
-                    // Down within footer buttons
+                        { _cards[0].Focus(FocusState.Programmatic); focusTarget = "card[0]"; }
+                    else if (navDown && fsCardIdx >= 0 && footerStart < elements.Count)
+                        { elements[footerStart].Focus(FocusState.Programmatic); focusTarget = "footer[0]"; }
                     else if (navDown && curIdx >= footerStart && curIdx < elements.Count - 1)
-                    {
-                        NavLog($"[NavTick] → Focus element {curIdx + 1} (down in footer)");
-                        elements[curIdx + 1].Focus(FocusState.Programmatic);
-                    }
+                        { elements[curIdx + 1].Focus(FocusState.Programmatic); focusTarget = $"footer[{curIdx - footerStart + 1}]"; }
 
-                    // Up from card → header (FullScreenToggle)
                     if (navUp && fsCardIdx >= 0)
-                    {
-                        NavLog("[NavTick] → Focus FullScreenToggle (up from card)");
-                        elements[0].Focus(FocusState.Programmatic);
-                    }
-                    // Up from footer
-                    else if (navUp && curIdx >= footerStart)
-                    {
-                        if (curIdx == footerStart)
-                        {
-                            // Up from first footer button → last card
-                            NavLog($"[NavTick] → Focus card {_cards.Count - 1} (up to cards)");
-                            _cards[_cards.Count - 1].Focus(FocusState.Programmatic);
-                        }
-                        else
-                        {
-                            // Up within footer buttons
-                            NavLog($"[NavTick] → Focus element {curIdx - 1} (up in footer)");
-                            elements[curIdx - 1].Focus(FocusState.Programmatic);
-                        }
-                    }
+                        { elements[0].Focus(FocusState.Programmatic); focusTarget = "header"; }
+                    else if (navUp && curIdx == footerStart)
+                        { _cards[_cards.Count - 1].Focus(FocusState.Programmatic); focusTarget = $"card[{_cards.Count - 1}]"; }
+                    else if (navUp && curIdx > footerStart)
+                        { elements[curIdx - 1].Focus(FocusState.Programmatic); focusTarget = $"footer[{curIdx - footerStart - 1}]"; }
 
-                    // Left/right in footer buttons
                     if (navLeft && curIdx >= footerStart && curIdx > footerStart)
-                    {
-                        NavLog($"[NavTick] → Focus element {curIdx - 1} (left in footer)");
-                        elements[curIdx - 1].Focus(FocusState.Programmatic);
-                    }
+                        { elements[curIdx - 1].Focus(FocusState.Programmatic); focusTarget = $"footer[{curIdx - footerStart - 1}]"; }
                     if (navRight && curIdx >= footerStart && curIdx < elements.Count - 1)
-                    {
-                        NavLog($"[NavTick] → Focus element {curIdx + 1} (right in footer)");
-                        elements[curIdx + 1].Focus(FocusState.Programmatic);
-                    }
+                        { elements[curIdx + 1].Focus(FocusState.Programmatic); focusTarget = $"footer[{curIdx - footerStart + 1}]"; }
                 }
                 else
                 {
-                    // Handheld: vertical list — up/down navigates everything linearly
                     if (navUp && curIdx > 0)
-                    {
-                        NavLog($"[NavTick] → Focus element {curIdx - 1} (up)");
-                        elements[curIdx - 1].Focus(FocusState.Programmatic);
-                    }
+                        { elements[curIdx - 1].Focus(FocusState.Programmatic); focusTarget = $"el[{curIdx - 1}]"; }
                     if (navDown && curIdx < elements.Count - 1)
                     {
                         int nextIdx = curIdx < 0 ? 0 : curIdx + 1;
-                        NavLog($"[NavTick] → Focus element {nextIdx} (down)");
                         elements[nextIdx].Focus(FocusState.Programmatic);
+                        focusTarget = $"el[{nextIdx}]";
                     }
                 }
 
-                // ── A button on cards: tap = rumble, hold = reorder ──────────────────
-                // On buttons: tap = activate
+                // ── A button: tap = rumble, hold = reorder; on buttons: activate
                 int cardIdx = FocusedCardIndex;
 
-                if (aJustPressed && _focusedElement is not null)
+                if (aPressed && _focusedElement is not null)
                 {
                     if (cardIdx >= 0)
                     {
@@ -845,23 +932,19 @@ public sealed partial class MainWindow : Window
                         _aHoldStart          = DateTime.UtcNow;
                         _aHoldEnteredReorder = false;
                         _holdTimer.Start();
-                        NavLog($"[NavTick] A pressed on card {cardIdx}");
                     }
                     else if (_focusedElement is Button btn)
                     {
-                        // A on a button = activate it
-                        NavLog($"[NavTick] A pressed on button '{btn.Content}'");
                         ActivateButton(btn);
                     }
                 }
 
-                if (aJustReleased)
+                if (aReleased)
                 {
                     _holdTimer.Stop();
                     _holdTickCount = 0;
                     if (_aHoldStart.HasValue && !_aHoldEnteredReorder && cardIdx >= 0)
                     {
-                        NavLog("[NavTick] → TriggerRumble (tap <500ms)");
                         _cards[cardIdx].StopHoldRumble();
                         _cards[cardIdx].HideHoldProgress();
                         _cards[cardIdx].TriggerRumble();
@@ -870,11 +953,36 @@ public sealed partial class MainWindow : Window
                     _aHoldEnteredReorder = false;
                 }
             }
+
+            long t2 = Stopwatch.GetTimestamp();
+
+            // ── Latency measurement (first 20 presses) ──────────────────────
+            if (focusTarget is not null && _latencyLogCount < MaxLatencyLogs)
+            {
+                _latencyLogCount++;
+                double t1MinusT0Ms = (t1 - frame.T0Ticks) * 1000.0 / Stopwatch.Frequency;
+                double t2MinusT0Ms = (t2 - frame.T0Ticks) * 1000.0 / Stopwatch.Frequency;
+
+                // T3: schedule a low-priority callback that runs after layout/render
+                int logNum = _latencyLogCount;
+                _uiDispatcher?.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+                {
+                    long t3 = Stopwatch.GetTimestamp();
+                    double t3MinusT0Ms = (t3 - frame.T0Ticks) * 1000.0 / Stopwatch.Frequency;
+
+                    string line = $"[{DateTime.Now:HH:mm:ss.fff}] #{logNum} target={focusTarget} " +
+                                  $"T1-T0={t1MinusT0Ms:F2}ms T2-T0={t2MinusT0Ms:F2}ms T3-T0={t3MinusT0Ms:F2}ms";
+                    lock (_logLock)
+                    {
+                        try { System.IO.File.AppendAllText(LatencyLogPath, line + Environment.NewLine); }
+                        catch { }
+                    }
+                });
+            }
         }
         catch (Exception ex)
         {
-            NavLog($"[NavTimer_Tick ERROR] {ex}");
-            DebugLog.Exception("NavTimer_Tick", ex);
+            DebugLog.Exception("HandleNavInput", ex);
         }
     }
 
@@ -888,25 +996,30 @@ public sealed partial class MainWindow : Window
 
     private void WatchdogTimer_Tick(object? sender, object e)
     {
-        NavLog($"[Watchdog] navTimer.IsEnabled={_navTimer.IsEnabled} " +
-               $"windowActive={_windowActive} ticksSinceLast={_navTickCount} " +
-               $"navTimer=0x{_navTimer.GetHashCode():X}");
+        bool threadAlive = _navThread?.IsAlive ?? false;
+        bool stalled = threadAlive && _navTickCount == 0;
 
-        // Restart if disabled OR if it's enabled but stalled (no ticks in the last 5s).
-        bool stalled = _navTimer.IsEnabled && _navTickCount == 0;
-        if (!_navTimer.IsEnabled || stalled)
+        if (!threadAlive || stalled)
         {
-            NavLog($"[Watchdog] *** nav timer {(stalled ? "stalled" : "stopped")} — restarting ***");
-            _navTimer.Stop();
-            _navTimer.Start();
+            NavLog($"[Watchdog] nav thread {(stalled ? "stalled" : "dead")} — restarting");
+            DebugLog.Log($"[Watchdog] nav thread {(stalled ? "stalled" : "dead")} — restarting");
+            StopNavThread();
+            _navThreadRunning = true;
+            _navThread = new Thread(NavInputThread_Run)
+            {
+                Name = "NavInput",
+                IsBackground = true,
+                Priority = ThreadPriority.AboveNormal,
+            };
+            _navThread.Start();
         }
 
-        _navTickCount = 0;
+        Interlocked.Exchange(ref _navTickCount, 0);
     }
 
     /// <summary>
     /// Owns the hold-A progress bar animation.
-    /// Fires every 16ms while A is held, started by NavTimer_Tick on A press.
+    /// Fires every 16ms while A is held, started by HandleNavInput on A press.
     /// Suppresses the bar for the first 200ms (tap feels instant), then fills it
     /// over [200ms, 500ms]. Calls StartReorder() at the 500ms threshold and stops itself.
     /// </summary>
@@ -1253,7 +1366,7 @@ public sealed partial class MainWindow : Window
     // The entire class of XYFocus corruption bugs is eliminated by:
     //   1. XYFocusKeyboardNavigation="Disabled" on SlotPanel (XAML)
     //   2. All D-pad focus movement via explicit _cards[n].Focus(Programmatic)
-    //      in NavTimer_Tick (gamepad) and ContentGrid_KeyDown (keyboard / Tab)
+    //      in HandleNavInput (gamepad) and ContentGrid_KeyDown (keyboard / Tab)
     //   3. Tab order driven purely by TabIndex, rebuilt after every reorder
 
     // ── Full-screen toggle ──────────────────────────────────────────────────
