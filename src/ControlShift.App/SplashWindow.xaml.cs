@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -53,7 +52,7 @@ public sealed partial class SplashWindow : Window
     private void CenterOnScreen()
     {
         var hwnd = WindowNative.GetWindowHandle(this);
-        uint dpi = GetDpiForWindow(hwnd);
+        uint dpi = NativeMethods.GetDpiForWindow(hwnd);
 
         // Logical size: 480x300. Scale to physical pixels for current DPI.
         int pxW = (int)(480.0 * dpi / 96);
@@ -88,6 +87,4 @@ public sealed partial class SplashWindow : Window
         DispatcherQueue.GetForCurrentThread().TryEnqueue(() => Close());
     }
 
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

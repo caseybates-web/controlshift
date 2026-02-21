@@ -1339,7 +1339,7 @@ public sealed partial class MainWindow : Window
     private void SetWindowSize(int logicalWidth, int logicalHeight)
     {
         var hwnd  = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        var dpi   = GetDpiForWindow(hwnd);
+        var dpi   = NativeMethods.GetDpiForWindow(hwnd);
         var scale = dpi / 96.0;
 
         var appWindow = AppWindow.GetFromWindowId(
@@ -1349,9 +1349,6 @@ public sealed partial class MainWindow : Window
             (int)(logicalWidth  * scale),
             (int)(logicalHeight * scale)));
     }
-
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     // ── XInput diagnostic dump ────────────────────────────────────────────────
     // Raw P/Invoke to XInputGetState and XInputGetBatteryInformation — bypasses

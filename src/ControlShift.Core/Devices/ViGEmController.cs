@@ -14,6 +14,8 @@ namespace ControlShift.Core.Devices;
 /// </remarks>
 public sealed class ViGEmController : IViGEmController
 {
+    private const ushort GuideButtonMask = 0x0400;
+
     private readonly IXbox360Controller _controller;
     private bool _connected;
     private bool _disposed;
@@ -53,11 +55,11 @@ public sealed class ViGEmController : IViGEmController
     {
         if (!_connected) return;
 
-        // Strip the Guide button (0x0400) — forwarding it through ViGEm
-        // triggers the Windows Xbox Game Bar / task switcher.
-        ushort buttons = (ushort)(r.Buttons & ~0x0400);
+        // Strip the Guide button — forwarding it through ViGEm triggers
+        // the Windows Xbox Game Bar / task switcher.
+        ushort buttons = (ushort)(r.Buttons & ~GuideButtonMask);
 
-        if ((r.Buttons & 0x0400) != 0)
+        if ((r.Buttons & GuideButtonMask) != 0)
             DebugLog.Log($"[ViGEm] Guide button BLOCKED (raw buttons=0x{r.Buttons:X4})");
 
         // Buttons — standard Xbox 360 bitmask mapping.

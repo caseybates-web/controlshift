@@ -17,6 +17,8 @@ namespace ControlShift.Core.Devices;
 /// </remarks>
 public sealed class ControllerMatcher : IControllerMatcher
 {
+    private const string XboxVid = "045E";
+
     private readonly IVendorDatabase      _vendors;
     private readonly IDeviceFingerprinter _fingerprinter;
     private readonly IPnpBusDetector      _busDetector;
@@ -126,7 +128,7 @@ public sealed class ControllerMatcher : IControllerMatcher
                 Debug.WriteLine($"    unambiguous IG match: VID={hid.Vid} PID={hid.Pid}");
             }
             else if (igCandidates.Count > 1
-                  && igCandidates.All(h => string.Equals(h.Vid, "045E", StringComparison.OrdinalIgnoreCase)))
+                  && igCandidates.All(h => string.Equals(h.Vid, XboxVid, StringComparison.OrdinalIgnoreCase)))
             {
                 // Multiple VID=045E candidates share the same IG_0N (real-world Xbox
                 // behavior). Use slot connection type to pick from the appropriate pool.
@@ -144,7 +146,7 @@ public sealed class ControllerMatcher : IControllerMatcher
                 // Mixed VIDs with the same IG_0N (unusual). Prefer non-045E first since
                 // 045E is likely already claimed by pool logic in another slot.
                 hid = igCandidates
-                    .OrderByDescending(h => !string.Equals(h.Vid, "045E", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(h => !string.Equals(h.Vid, XboxVid, StringComparison.OrdinalIgnoreCase))
                     .First(h => !usedPaths.Contains(h.DevicePath));
                 Debug.WriteLine($"    mixed-VID fallback: VID={hid?.Vid} PID={hid?.Pid}");
             }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using ControlShift.Core.Devices;
 
 namespace ControlShift.Core.Enumeration;
 
@@ -129,7 +130,7 @@ public sealed class PnpBusDetector : IPnpBusDetector
         DumpLog($"  fast-path-2: ClassifyInstanceId(path) → Unknown, proceeding to tree walk");
 
         // ── CfgMgr32 tree walk ────────────────────────────────────────────────
-        string instanceId = DevicePathToInstanceId(hidDevicePath);
+        string instanceId = DevicePathConverter.ToInstanceId(hidDevicePath);
         DumpLog($"  instanceId: {instanceId}");
 
         int locateResult = CM_Locate_DevNodeW(out uint devNode, instanceId, CM_FLAGS_NONE);
@@ -172,31 +173,12 @@ public sealed class PnpBusDetector : IPnpBusDetector
     // ── Path → Instance ID conversion ────────────────────────────────────────
 
     /// <summary>
-    /// Converts an HID device path to a PnP device instance ID suitable for
-    /// CM_Locate_DevNodeW.
-    /// <example>
-    ///   "\\?\hid#vid_045e&amp;pid_02ff&amp;ig_00#7&amp;286a539d&amp;1&amp;0000#{4d1e55b2-...}"
-    ///   → "HID\VID_045E&amp;PID_02FF&amp;IG_00\7&amp;286A539D&amp;1&amp;0000"
-    /// </example>
+    /// Converts an HID device path to a PnP device instance ID.
+    /// Delegates to <see cref="DevicePathConverter.ToInstanceId"/> — kept for
+    /// backward compatibility with existing tests.
     /// </summary>
     internal static string DevicePathToInstanceId(string devicePath)
-    {
-        string s = devicePath;
-
-        // Strip \\?\ prefix.
-        if (s.StartsWith(@"\\?\", StringComparison.Ordinal))
-            s = s.Substring(4);
-
-        // Remove trailing #{GUID} — the interface GUID appended by Windows.
-        int lastHashBrace = s.LastIndexOf("#{", StringComparison.Ordinal);
-        if (lastHashBrace >= 0)
-            s = s.Substring(0, lastHashBrace);
-
-        // Replace '#' separators with '\' (Windows instance ID format).
-        s = s.Replace('#', '\\');
-
-        return s.ToUpperInvariant();
-    }
+        => DevicePathConverter.ToInstanceId(devicePath);
 
     // ── ClassifyInstanceId ────────────────────────────────────────────────────
 
