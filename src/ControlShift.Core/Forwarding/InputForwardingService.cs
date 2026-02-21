@@ -26,9 +26,6 @@ namespace ControlShift.Core.Forwarding;
 /// </remarks>
 public sealed class InputForwardingService : IInputForwardingService
 {
-    private static readonly string DiagPath =
-        Path.Combine(Path.GetTempPath(), "controlshift-forwarding-diag.txt");
-
     private readonly IHidHideService _hidHide;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<ForwardingPair> _pairs = new();
@@ -51,21 +48,13 @@ public sealed class InputForwardingService : IInputForwardingService
         _hidHide = hidHide;
     }
 
-    private static void DiagLog(string msg)
-    {
-        var line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n";
-        Debug.Write(line);
-        try { File.AppendAllText(DiagPath, line); } catch { }
-    }
+    private static void DiagLog(string msg) => DebugLog.Log($"[ForwardingSvc] {msg}");
 
     public async Task StartForwardingAsync(IReadOnlyList<SlotAssignment> assignments)
     {
         await _gate.WaitAsync();
         try
         {
-            // Clear diagnostic file on each start.
-            try { File.WriteAllText(DiagPath, ""); } catch { }
-
             if (IsForwarding)
                 throw new InvalidOperationException("Forwarding is already active. Call StopForwardingAsync first.");
 
