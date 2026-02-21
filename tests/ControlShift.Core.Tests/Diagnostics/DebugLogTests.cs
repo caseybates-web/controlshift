@@ -3,27 +3,10 @@ using ControlShift.Core.Diagnostics;
 
 namespace ControlShift.Core.Tests.Diagnostics;
 
-public class DebugLogTests : IDisposable
+public class DebugLogTests
 {
     private readonly string _logPath =
         Path.Combine(Path.GetTempPath(), "controlshift-debug.log");
-
-    private readonly string? _backupContent;
-    private readonly bool _hadExistingLog;
-
-    public DebugLogTests()
-    {
-        // Preserve any existing log so tests don't clobber real debug data.
-        _hadExistingLog = File.Exists(_logPath);
-        if (_hadExistingLog)
-            _backupContent = File.ReadAllText(_logPath);
-    }
-
-    public void Dispose()
-    {
-        if (_hadExistingLog && _backupContent != null)
-            File.WriteAllText(_logPath, _backupContent);
-    }
 
     [Fact]
     public void Log_WritesTimestampedLine()

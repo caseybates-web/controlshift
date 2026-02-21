@@ -2,7 +2,7 @@
 
 A lightweight Windows app that lets users see all connected controllers, identify them via rumble, and reorder their XInput Player Index assignments on gaming handhelds. Solves the problem where the integrated gamepad permanently holds Player 1, preventing Bluetooth controllers from being recognized by games that only poll the first controller.
 
-**Status:** Phase 3 complete — profiles, process watcher, anticheat, WiX installer.
+**Status:** Core app complete — enumerate, identify, reorder. Profiles removed (app simplified).
 **Owner:** Hardware PdM managing e2e
 **License:** MIT (open source, public release)
 **Target:** Windows 10 (19041) minimum, Windows 11 supported
@@ -113,8 +113,8 @@ This is the same approach used by DS4Windows and NVIDIA GameStream. ViGEmBus and
 | HID enumeration | HidSharp |
 | Virtual controller bus | Nefarius.ViGEm.Client |
 | Input suppression | Nefarius.Drivers.HidHide |
-| Profile storage | System.Text.Json → %APPDATA%\ControlShift\profiles\ |
-| Process watching | Win32 WMI event subscription |
+| Persistence | System.Text.Json → %APPDATA%\ControlShift\ (slot-order.json, nicknames.json) |
+| Diagnostics | DebugLog → %TEMP%\controlshift-debug.log (5MB rotation) |
 | Packaging | WiX Burn bootstrapper (CI-built) |
 | CI | GitHub Actions — dotnet build/test + WiX + GitHub Release |
 
@@ -133,12 +133,12 @@ This is the same approach used by DS4Windows and NVIDIA GameStream. ViGEmBus and
 /src/ControlShift.Core/         # All controller logic — no UI dependency
   /Enumeration/                 # XInput + HID device discovery
   /Devices/                     # Fingerprinting, vendor lookup, controller matching
-  /Forwarding/                  # Input forwarding loop (Phase 2)
-  /Profiles/                    # Profile model + JSON persistence (Phase 3)
-/src/ControlShift.Installer/    # WiX Burn bootstrapper (Phase 3)
+  /Forwarding/                  # Input forwarding loop (HID→ViGEm)
+  /Diagnostics/                 # DebugLog (persistent file logger)
+/src/ControlShift.Installer/    # WiX Burn bootstrapper
+/src/ControlShift.Spike/        # ViGEm/HidHide hardware validation spike
 /devices/known-devices.json     # VID/PID database for integrated gamepads
 /devices/known-vendors.json     # VID → brand name (Xbox, PlayStation, Nintendo, ...)
-/profiles/examples/             # Example per-game profile JSON files
 /docs/                          # Architecture notes
 /.github/workflows/             # CI: build, test, release
 ```
@@ -167,7 +167,7 @@ dotnet test
 
 ---
 
-## Phase 2 — Controller Reordering
+## Phase 2 — Controller Reordering ✓ (complete)
 
 ### Step 7 — Rich Controller Identity ✓ (complete)
 
@@ -324,25 +324,26 @@ ViGEm cannot request a specific XInput slot — Windows assigns slots in connect
 
 ---
 
-## Phase 3 — Per-Game Profiles ✓ (complete)
+## Known Issues & Architecture Notes
 
-### Profile Save/Load (PR #16)
-- ProfileStore: `%APPDATA%\ControlShift\profiles\{name}.json`
-- Profiles store VID:PID strings (stable across reconnects), resolved to device paths at apply time
-- ProfileResolver: VID:PID → current device paths, handles duplicates via claim tracking
-- Save Profile button: auto-detects foreground EXE, ContentDialog for name/exe
-- Profiles button: list/load/delete saved profiles
+### ViGEm Virtual Slot Detection
+ViGEm's `UserIndex` reports the internal connection order (0-based), NOT the actual XInput slot assigned by Windows. Virtual slot detection uses a before/after XInput `GetState()` snapshot: slots that appear after ViGEm `Connect()` are virtual. Cached across stop/start cycles (pool is persistent).
 
-### WMI Process Watcher + Anticheat Auto-Revert (PR B)
-- WMI: `Win32_ProcessStartTrace` / `Win32_ProcessStopTrace` for game launch/exit detection
-- Watches all exe names from saved profiles, fires events on WMI worker thread
-- Auto-apply: non-anticheat game launches → load matching profile → start forwarding
-- Auto-revert: game exits → stop forwarding
-- Anticheat safety: known anticheat game → STOP forwarding before game fully starts
-- `AntiCheatDatabase`: loads `devices/anticheat-games.json`, case-insensitive O(1) lookup
-- Warning dialog when saving profile for known anticheat game
+### Guide Button (0x0400)
+The Xbox Guide button must NEVER be forwarded through ViGEm — it triggers the Windows Xbox Game Bar / task switcher. `ViGEmController.SubmitReport()` strips bit 0x0400 from the buttons bitmask and always sets Guide to false.
 
-### WiX Installer (PR C)
+### Connect/Disconnect Chime Prevention
+ViGEm controllers are connected once and persisted across stop/start cycles. Only `RevertAllAsync()` and `Dispose()` disconnect them. This prevents WM_DEVICECHANGE chime loops.
+
+### NavTimer Virtual Slot Exclusion
+The NavTimer (XInput polling for UI navigation) skips slots in `VirtualSlotIndices` to avoid reading ViGEm virtual controller output as navigation input.
+
+### ASUS ROG Ally Findings
+- Integrated gamepad always occupies XInput slot 0 and exposes `IG_00` in its HID path
+- BT Xbox controllers also expose `ig_00` regardless of XInput slot — disambiguation uses bus type (USB vs wireless) via PnP device tree walk (CfgMgr32)
+- Xbox Wireless Adapter controllers register as `XboxWirelessAdapter` bus type
+
+### WiX Installer
 - WiX 4 Burn bootstrapper: ViGEmBus → HidHide → ControlShift MSI
 - `Permanent=yes` on drivers (not removed on uninstall)
 - Custom action on uninstall: `ControlShift.App.exe --cleanup` to clear HidHide rules
@@ -350,22 +351,12 @@ ViGEm cannot request a specific XInput slot — Windows assigns slots in connect
 
 ---
 
-## Anticheat — Critical Constraint ✓ (implemented)
-
-EAC and BattlEye may block launch when virtual XInput devices are active.
-
-- Ship bundled `anticheat-games.json` ✓
-- Call `StopForwardingAsync()` BEFORE anticheat game process fully starts ✓
-- Show warning when saving a profile for a known anticheat game ✓
-
----
-
 ## Out of Scope for v1
 
+- Per-game profiles (removed — app is launch → reorder → done)
 - Button remapping / key rebinding
 - Linux / Steam Deck
 - Accessibility (a11y)
-- Cloud profile sync
 - System tray presence
 - Auto-update
 
@@ -381,10 +372,12 @@ EAC and BattlEye may block launch when virtual XInput devices are active.
 - [ ] Click controller card — rumble fires 200ms at 25% strength, card border highlights green
 - [ ] Plug/unplug controllers — list updates within 5 seconds
 - [ ] Reorder: promote BT to P1 — verify in x360ce that slot 0 shows BT input
+- [ ] "What Windows Sees" panel shows correct slot order after reorder
 - [ ] Launch XInput-only game (Forza Horizon 5) — BT controller seen as P1
+- [ ] Revert All restores original order, all controllers reappear
 - [ ] Kill app via Task Manager while forwarding active — devices reappear on relaunch
-- [ ] Anticheat game — verify auto-revert fires before launch
 - [ ] Uninstall — HidHide rules cleared, drivers remain
+- [ ] Debug log written to %TEMP%\controlshift-debug.log
 
 ---
 
