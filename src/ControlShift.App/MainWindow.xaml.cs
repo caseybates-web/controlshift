@@ -543,6 +543,7 @@ public sealed partial class MainWindow : Window
             _xinputEnum.InvalidateAll();
             _hidEnum.InvalidateCache();
             _ = RefreshAsync();
+            RefreshWindowsSees();
         }
         catch (Exception ex)
         {
@@ -1475,79 +1476,67 @@ public sealed partial class MainWindow : Window
     // ── "What Windows Sees" panel ─────────────────────────────────────────────
 
     /// <summary>
-    /// Reads raw XInput state via P/Invoke, bypassing all ControlShift logic,
-    /// and updates the status lines in the footer panel. Hides virtual ViGEm slots.
+    /// Updates the "What Windows Sees" panel. When forwarding is active, shows
+    /// the card order (what games see via ViGEm virtual controllers). When not
+    /// forwarding, shows raw XInput state for each slot.
     /// </summary>
     private void RefreshWindowsSees()
     {
-        const uint ERROR_SUCCESS = 0;
-        const uint XINPUT_FLAG_GAMEPAD = 0x00000001;
-
         TextBlock[] rows = { WindowsSeesP1, WindowsSeesP2, WindowsSeesP3, WindowsSeesP4 };
-        var virtualSlots = _forwardingService.VirtualSlotIndices;
         var greenBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(
             Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x10, 0x7C, 0x10));
         var greyBrush = (Microsoft.UI.Xaml.Media.SolidColorBrush)
             Application.Current.Resources["XbTextMutedBrush"];
 
-        for (uint i = 0; i < 4; i++)
+        if (_forwardingService.IsForwarding)
         {
-            // Hide virtual ViGEm slots — they have no physical input.
-            if (virtualSlots.Contains((int)i))
+            // Forwarding active: show the card order — this is what games see
+            // through the ViGEm virtual controllers.
+            for (int i = 0; i < 4; i++)
             {
-                rows[i].Visibility = Visibility.Collapsed;
-                continue;
-            }
-
-            rows[i].Visibility = Visibility.Visible;
-            uint rc = RawXInputGetState(i, out _);
-            if (rc == ERROR_SUCCESS)
-            {
-                // Try to get the display name from the card list for richer labels.
-                string? cardName = null;
-                string? connLabel = null;
-                var slotVm = _viewModel.Slots.FirstOrDefault(s => s.SlotIndex == (int)i);
-                if (slotVm is not null && slotVm.IsConnected)
+                if (i < _cards.Count)
                 {
-                    cardName = slotVm.DisplayName;
-                    connLabel = slotVm.ConnectionLabel;
+                    var slotVm = _viewModel.Slots.FirstOrDefault(
+                        s => s.SlotIndex == _cards[i].SlotIndex);
+                    string name = slotVm?.DisplayName ?? "Controller";
+                    string conn = slotVm?.ConnectionLabel ?? "";
+                    string label = !string.IsNullOrEmpty(conn)
+                        ? $"{name} ({conn})" : name;
+                    rows[i].Text = $"\u2B24  P{i + 1}: {label}";
+                    rows[i].Foreground = greenBrush;
+                    rows[i].Visibility = Visibility.Visible;
                 }
-
-                // Fall back to XInputGetCapabilities subtype if no card match.
-                if (string.IsNullOrEmpty(cardName))
+                else
                 {
-                    cardName = "Gamepad";
-                    uint capRc = RawXInputGetCapabilities(i, XINPUT_FLAG_GAMEPAD, out XINPUT_CAPABILITIES caps);
-                    if (capRc == ERROR_SUCCESS)
-                    {
-                        cardName = caps.SubType switch
-                        {
-                            0x01 => "Gamepad",
-                            0x02 => "Wheel",
-                            0x03 => "Arcade Stick",
-                            0x04 => "Flight Stick",
-                            0x05 => "Dance Pad",
-                            0x06 => "Guitar",
-                            0x08 => "Drum Kit",
-                            _ => "Controller",
-                        };
-                        bool wireless = (caps.Flags & 0x0002) != 0;
-                        if (wireless && string.IsNullOrEmpty(connLabel))
-                            connLabel = "Wireless";
-                    }
+                    rows[i].Visibility = Visibility.Collapsed;
                 }
-
-                string label = !string.IsNullOrEmpty(connLabel)
-                    ? $"{cardName} ({connLabel})"
-                    : cardName;
-
-                rows[i].Text = $"\u2B24  P{i + 1}: {label}";
-                rows[i].Foreground = greenBrush;
             }
-            else
+        }
+        else
+        {
+            // Not forwarding: show raw XInput state directly.
+            const uint ERROR_SUCCESS = 0;
+            for (uint i = 0; i < 4; i++)
             {
-                rows[i].Text = $"\u2B24  P{i + 1}: Empty";
-                rows[i].Foreground = greyBrush;
+                uint rc = RawXInputGetState(i, out _);
+                if (rc == ERROR_SUCCESS)
+                {
+                    var slotVm = _viewModel.Slots.FirstOrDefault(
+                        s => s.SlotIndex == (int)i);
+                    string name = slotVm?.DisplayName ?? "Gamepad";
+                    string conn = slotVm?.ConnectionLabel ?? "";
+                    string label = !string.IsNullOrEmpty(conn)
+                        ? $"{name} ({conn})" : name;
+                    rows[i].Text = $"\u2B24  P{i + 1}: {label}";
+                    rows[i].Foreground = greenBrush;
+                    rows[i].Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    rows[i].Text = $"\u2B24  P{i + 1}: Empty";
+                    rows[i].Foreground = greyBrush;
+                    rows[i].Visibility = Visibility.Visible;
+                }
             }
         }
     }
